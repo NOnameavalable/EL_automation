@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE/editor
+.idea/
+.vscode/
+
+# Browser temp profiles
+chrome-temp/
+edge-temp/
+
+# OS files
+.DS_Store
+Thumbs.db
