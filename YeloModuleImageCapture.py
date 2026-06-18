@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from collections.abc import Callable
 import time
 from threading import Event
+from typing import Optional
 from SSD220 import div
 from SSD220 import get_pos
 from SSD220 import move
+from SSD220 import move_with_control
 from SSD220 import move_to_origin
 from SSD220 import set_res_gpib
 from pyvisa.resources import MessageBasedResource
@@ -45,6 +47,8 @@ class DieLayout:
         die_spacing: Micrometer spacing between neighboring dies in the same group.
         group_gap: Extra micrometer spacing added between row groups.
         row_spacing: Micrometer spacing between the odd-die row and even-die row.
+        second_row_y_offset: One-time Y offset applied to every second-row
+            coordinate when transitioning from the first row.
     """
 
     dies_per_row: int
@@ -52,6 +56,7 @@ class DieLayout:
     die_spacing: int
     group_gap: int
     row_spacing: int
+    second_row_y_offset: int = 0
 
     def die_positions(self) -> dict[str, Point]:
         """Return die positions for the full layout.
@@ -71,7 +76,11 @@ class DieLayout:
             group_index = position_in_row // self.dies_per_group
 
             x = row * self.row_spacing
-            y = position_in_row * self.die_spacing + group_index * self.group_gap
+            y = (
+                position_in_row * self.die_spacing
+                + group_index * self.group_gap
+                + row * self.second_row_y_offset
+            )
 
             positions[str(die_number)] = [str(x), str(y)]
 
@@ -134,37 +143,13 @@ def _move_to_home(stage: MessageBasedResource, home_position: dict[str, str]) ->
 """================ Main Sequence Methods ================"""
 
 
-def _handle_control_request(
-    stage: MessageBasedResource,
-    home_position: dict[str, str],
-    stop_requested: Callable[[], bool] | None,
-    resume_allowed: Event | None,
-) -> bool:
-    """Return `True` when the sequence should stop after moving home."""
-    if stop_requested is not None and stop_requested():
-        print("Stop requested. Moving to home.")
-        _move_to_home(stage, home_position)
-        return True
-
-    if resume_allowed is not None and not resume_allowed.is_set():
-        print("Pause requested. Waiting to resume.")
-        while not resume_allowed.wait(timeout=0.2):
-            if stop_requested is not None and stop_requested():
-                print("Stop requested while paused. Moving to home.")
-                _move_to_home(stage, home_position)
-                return True
-        print("Pause released. Resuming sequence.")
-
-    return False
-
-
 def main(
     stage: MessageBasedResource,
     home_position: dict[str, str],
     contact_z: str,
-    capture_el: Callable[[str], object] | None = None,
-    stop_requested: Callable[[], bool] | None = None,
-    resume_allowed: Event | None = None,
+    capture_el: Optional[Callable[[str], object]] = None,
+    stop_requested: Optional[Callable[[], bool]] = None,
+    resume_allowed: Optional[Event] = None,
 ) -> None:
     """Run the die probing movement sequence.
 
@@ -185,6 +170,7 @@ def main(
         die_spacing=9000,
         group_gap=12500,
         row_spacing=32500,
+        second_row_y_offset=5000,
     )
     die_positions = layout.die_positions()
     travel_order = die_travel_order(32)
@@ -207,25 +193,45 @@ def main(
             f"xy_pulse={xy_pulse}, z_down={z_down}"
         )
 
-        if _handle_control_request(stage, home_position, stop_requested, resume_allowed):
+        if not move_with_control(
+            stage,
+            xy_pulse,
+            stop_requested=stop_requested,
+            resume_allowed=resume_allowed,
+        ):
+            print("Stop requested during XY movement. Moving to home.")
+            _move_to_home(stage, home_position)
             return
-        move(stage, xy_pulse, read_position=False)
 
-        if _handle_control_request(stage, home_position, stop_requested, resume_allowed):
+        if not move_with_control(
+            stage,
+            {"Z": z_down},
+            stop_requested=stop_requested,
+            resume_allowed=resume_allowed,
+        ):
+            print("Stop requested during Z-down movement. Moving to home.")
+            _move_to_home(stage, home_position)
             return
-        move(stage, {"Z": z_down}, read_position=False)
 
         if capture_el is not None:
-            if _handle_control_request(stage, home_position, stop_requested, resume_allowed):
+            if stop_requested is not None and stop_requested():
+                print("Stop requested before EL capture. Moving to home.")
+                _move_to_home(stage, home_position)
                 return
             if capture_el(die) is False:
                 print("EL capture failed or was cancelled. Moving to home.")
                 _move_to_home(stage, home_position)
                 return
 
-        if _handle_control_request(stage, home_position, stop_requested, resume_allowed):
+        if not move_with_control(
+            stage,
+            {"Z": z_up},
+            stop_requested=stop_requested,
+            resume_allowed=resume_allowed,
+        ):
+            print("Stop requested during Z-up movement. Moving to home.")
+            _move_to_home(stage, home_position)
             return
-        move(stage, {"Z": z_up}, read_position=False)
 
         current_position = target_position
 

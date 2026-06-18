@@ -2,6 +2,9 @@ import tkinter as tk
 from lucam import Lucam, LucamNumCameras, LucamError, API
 from tkinter import messagebox, filedialog
 import os
+from collections.abc import Callable
+from threading import Event
+from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import ctypes
@@ -9,19 +12,32 @@ import cv2
 import imutils
 import time
 from PIL import Image
-from SSD220 import get_pos, move, set_res_gpib
+from pyvisa.resources import MessageBasedResource
+from Keithley2400 import set_keithley_output
+from SSD220 import get_pos, move, move_with_control, set_res_gpib
 
 EL_CAMERA_AXIS = "W"
 
 
 class LucamStreamApp:
-    def __init__(self, master, motor=None):
+    def __init__(
+        self,
+        master,
+        motor=None,
+        stop_requested: Optional[Callable[[], bool]] = None,
+        resume_allowed: Optional[Event] = None,
+        light_keithley: Optional[MessageBasedResource] = None,
+        probe_keithley: Optional[MessageBasedResource] = None,
+        output_state_changed: Optional[Callable[[str, bool], None]] = None,
+    ):
         self.master = master
         master.title("Camera and Motor Control")
         
         # Camera setup
         self.lucam = None
         self.streaming = False
+        self.display_window_created = False
+        self.capture_in_progress = False
         self.stream_duration = 0
         self.max_stream_time = 36001  # 10 hours of run-time and then it closes camera
         
@@ -33,6 +49,11 @@ class LucamStreamApp:
         self.window_height = 0
         
         self.motor = motor
+        self.stop_requested = stop_requested
+        self.resume_allowed = resume_allowed
+        self.light_keithley = light_keithley
+        self.probe_keithley = probe_keithley
+        self.output_state_changed = output_state_changed
 
         # Tk variables
         self.exposure_var = tk.DoubleVar(value=30)
@@ -117,10 +138,10 @@ class LucamStreamApp:
         streaming_frame = tk.Frame(self.master)
         streaming_frame.pack(pady=10)
         
-        self.start_button = tk.Button(streaming_frame, text="Start Streaming", command=self.start_streaming)
+        self.start_button = tk.Button(streaming_frame, text="Open Camera View", command=self.start_streaming)
         self.start_button.pack(side=tk.LEFT, padx=5)
         
-        self.stop_button = tk.Button(streaming_frame, text="Stop Streaming", command=self.stop_streaming, state=tk.DISABLED)
+        self.stop_button = tk.Button(streaming_frame, text="Close Camera View", command=self.stop_streaming, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
         
         """================ Snapshot Control Set ================"""
@@ -130,7 +151,12 @@ class LucamStreamApp:
         self.snapshot_button = tk.Button(snapshot_frame, text="Take Snapshot", command=self.take_snapshot, state=tk.DISABLED)
         self.snapshot_button.pack(side=tk.LEFT, padx=5)
         
-        self.snap_el_button = tk.Button(snapshot_frame, text="Take EL Snapshot", command=self.take_el_snapshot, state=tk.DISABLED)
+        self.snap_el_button = tk.Button(
+            snapshot_frame,
+            text="Take EL Snapshot",
+            command=lambda: self.take_el_snapshot(show_comparison=True),
+            state=tk.DISABLED,
+        )
         self.snap_el_button.pack(side=tk.LEFT, padx=5)
         
         """================ Status Display Set ================"""
@@ -256,7 +282,9 @@ class LucamStreamApp:
             return
         try:
             steps = self.steps_var.get()
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(steps))})
+            if not self._move_motor(str(-int(steps))):
+                self.update_status("Move up cancelled", "red")
+                return
             self.update_status("Moved up successfully", "green")
         except Exception as e:
             self.update_status(f"Move up error: {e}", "red")
@@ -267,7 +295,9 @@ class LucamStreamApp:
             return
         try:
             steps = self.steps_var.get()
-            move(self.motor, {EL_CAMERA_AXIS: str(int(steps))})
+            if not self._move_motor(str(int(steps))):
+                self.update_status("Move down cancelled", "red")
+                return
             self.update_status("Moved down successfully", "green")
         except Exception as e:
             self.update_status(f"Move down error: {e}", "red")
@@ -278,7 +308,9 @@ class LucamStreamApp:
             return
         try:
             steps = self.fine_steps_var.get()
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(steps))})
+            if not self._move_motor(str(-int(steps))):
+                self.update_status("Move up fine cancelled", "red")
+                return
             self.update_status("Moved up fine successfully", "green")
         except Exception as e:
             self.update_status(f"Move up fine error: {e}", "red")
@@ -289,10 +321,25 @@ class LucamStreamApp:
             return
         try:
             steps = self.fine_steps_var.get()
-            move(self.motor, {EL_CAMERA_AXIS: str(int(steps))})
+            if not self._move_motor(str(int(steps))):
+                self.update_status("Move down fine cancelled", "red")
+                return
             self.update_status("Moved down fine successfully", "green")
         except Exception as e:
             self.update_status(f"Move down fine error: {e}", "red")
+
+    def _move_motor(self, pulse: str) -> bool:
+        """Move the EL camera axis while honoring shared stop/pause controls."""
+        if self.motor is None:
+            return False
+        return move_with_control(
+            self.motor,
+            {EL_CAMERA_AXIS: pulse},
+            stop_requested=self.stop_requested,
+            resume_allowed=self.resume_allowed,
+            poll_callback=self.master.update,
+        )
+
     def find_focus(self):
         if not self.motor or not self.lucam:
             messagebox.showerror("Error", "Motor or camera not initialized")
@@ -583,13 +630,6 @@ class LucamStreamApp:
             # Open the first camera
             self.lucam = Lucam(1)
             
-            # Create a display window
-            self.lucam.CreateDisplayWindow(b'Lucam Video Stream')
-            
-            # Enable snapshot button
-            self.snapshot_button.config(state=tk.NORMAL)
-            self.update_status("Camera initialized successfully", "green")
-            
             # Enable snapshot buttons
             self.snapshot_button.config(state=tk.NORMAL)
             self.snap_el_button.config(state=tk.NORMAL)
@@ -604,7 +644,11 @@ class LucamStreamApp:
             return
         
         try:
-            # Start video streaming with display popup (built in from the library)
+            if not self.display_window_created:
+                self.lucam.CreateDisplayWindow(b'Lucam Video Stream')
+                self.display_window_created = True
+
+            # Start video streaming in the display window.
             self.lucam.StreamVideoControl('start_display')
             
             # Update UI state
@@ -624,21 +668,28 @@ class LucamStreamApp:
     def stop_streaming(self):
         if not self.lucam:
             return
-        
+
+        errors = []
         try:
-            #stop streaming
             self.lucam.StreamVideoControl('stop_streaming')
-            
-            # Resets the State of the UI
-            self.streaming = False
-            self.stream_duration = 0
-            self.start_button.config(state=tk.NORMAL)
-            self.stop_button.config(state=tk.DISABLED)
-            
-            self.update_status("Streaming stopped", "red")
-            
-        except LucamError as e:
-            self.update_status(f"Stop streaming error: {e}", "red")
+        except Exception as exc:
+            errors.append(str(exc))
+
+        try:
+            if self.display_window_created:
+                self.lucam.DestroyDisplayWindow()
+                self.display_window_created = False
+        except Exception as exc:
+            errors.append(str(exc))
+
+        self.streaming = False
+        self.stream_duration = 0
+        self.start_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.DISABLED)
+        if errors:
+            self.update_status(f"Close camera view error: {'; '.join(errors)}", "red")
+        else:
+            self.update_status("Camera view closed", "red")
     
     def take_snapshot(self):
         if not self.lucam:
@@ -764,7 +815,9 @@ class LucamStreamApp:
             #Destroy display window
             if self.lucam:
                 try:
-                    self.lucam.DestroyDisplayWindow()
+                    if self.display_window_created:
+                        self.lucam.DestroyDisplayWindow()
+                        self.display_window_created = False
                 except: pass
 
                 #close the camera connection
@@ -780,8 +833,9 @@ class LucamStreamApp:
        if not self.lucam:
            return
        try:
-           # Stop streaming if active
-           if self.streaming:
+           # Preserve whether the user had the camera preview open.
+           was_streaming = self.streaming
+           if was_streaming:
                self.stop_streaming()
            
            exposure_value = self.exposure_var.get()
@@ -794,7 +848,8 @@ class LucamStreamApp:
            self.lucam.SetFormat(frameformat, framerate=max_fps)
            self.update_status(f"Exposure: {exposure_value}ms, Max FPS: {max_fps}", "green")
            
-           self.start_streaming()
+           if was_streaming:
+               self.start_streaming()
            
        except LucamError as e:
            self.update_status(f"Failed to set exposure: {e}", "red")
@@ -833,146 +888,190 @@ class LucamStreamApp:
         file_path = os.path.join(self.dir_path.get(), output_path)
         shifted_overlay.save(file_path)
     
-    def take_el_snapshot(self):
-            """Takes two snapshots: one normal and one after moving up for EL imaging"""
-            EL_pulse = str(28000)
-            if not self.lucam or not self.motor:
-                messagebox.showerror("Error", "Camera or motor not initialized")
-                return False
-            if not all(self.info_vars[field].get() for field in self.info_vars):
-                messagebox.showerror("Error", "All fields must be filled in order to image")
-                return False
-            if not self.name_check():
-                return False
-            try:
-                original_exposure = self.exposure_var.get()
-                
-                # Take first snapshot (normal)
-                vis = self.take_snapshot()
-                if vis is None:
-                    return False
-                
-                # Show popup for light instruction
-                if not messagebox.showinfo("EL Image Setup", "Please turn off light and click OK to take EL image"):
-                    self.update_status("EL imaging cancelled", "red")
-                    return False
-                    
-                # Store current position
-                initial_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]
-                
-                # Move up by 50000 steps
-                self.update_status("Moving up for EL image...", "black")
-                move(self.motor, {EL_CAMERA_AXIS: str(-int(EL_pulse))})
-                
-                # Wait a moment for stability
-                time.sleep(1)
-                
-                # Take EL snapshot with modified filename
-                try:
-                    # Set exposure for EL imaging
-                    self.lucam.set_properties(
-                        brightness=1.0,
-                        contrast=1.0,
-                        saturation=1.0,
-                        hue=0.0,
-                        gamma=1.0,
-                        exposure=800.0,
-                        gain=3.9,
-                    )
-                    self.exposure_var.set(800.0)  # Set to 500ms
-                    self.set_exposure()
-                    
-                    # Get current format
-                    frameformat, framerate = self.lucam.GetFormat()
-                    
-                    # Take snapshot
-                    snapshot_settings = self.lucam.default_snapshot()
-                    raw_image = self.lucam.TakeSnapshot(snapshot_settings)
-                    
-                    # Get image dimensions
-                    height, width = raw_image.shape
-                    
-                    # Create buffer for RGB24 output
-                    rgb_image = np.empty((height, width, 3), dtype='uint8', order='C')
-                    
-                    # Convert raw to RGB24
-                    conversion = API.LUCAM_CONVERSION(
-                        DemosaicMethod=API.LUCAM_DM_HIGHER_QUALITY,
-                        CorrectionMatrix=API.LUCAM_CM_CUSTOM
-                    )
-                    
-                    if not API.LucamConvertFrameToRgb24(
-                        self.lucam._handle,
-                        rgb_image,
-                        raw_image.ctypes.data_as(API.pBYTE),
-                        width,
-                        height,
-                        frameformat.pixelFormat,
-                        ctypes.pointer(conversion)
-                    ):
-                        raise LucamError()
-                    
-                    # Convert from BGR to RGB
-                    rgb_image = rgb_image[..., ::-1]  # Flip the color channels
-                    rgb_image = cv2.rotate(rgb_image, cv2.ROTATE_180)
-                    rgb_image = np.flip(rgb_image, axis=1)
-                    
-                    #Overlays images - fixed image EL rotation 
-                    self.image_overlay(vis, rgb_image)
-                    
-                    # Create EL filename
-                    base_filename = "_".join(self.info_vars[field].get() for field in self.info_fields)
-                    el_filename = f"{base_filename}_EL.jpg"
-                    file_path = os.path.join(self.dir_path.get(), el_filename)
-                    
-                    # Save the EL image
-                    plt.imsave(file_path, rgb_image)
-                    
-                    self.update_status("EL snapshot sequence completed successfully", "green")
-                    
-                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-                    
-                    ax1.imshow(vis)
-                    ax1.set_title('Visible image')
-                    ax1.axis('off')
-                    
-                    ax2.imshow(rgb_image)
-                    ax2.set_title('EL image')
-                    ax2.axis('off')
-                    
-                    plt.tight_layout()
-                    plt.show()
-                    return True
-                    
+    @staticmethod
+    def _show_el_comparison(vis_image, el_image) -> None:
+        """Display visible and EL images for a user-requested manual capture."""
+        _, (visible_axis, el_axis) = plt.subplots(1, 2, figsize=(12, 6))
+        visible_axis.imshow(vis_image)
+        visible_axis.set_title("Visible image")
+        visible_axis.axis("off")
+        el_axis.imshow(el_image)
+        el_axis.set_title("EL image")
+        el_axis.axis("off")
+        plt.tight_layout()
+        plt.show()
 
-                    
-                except Exception as e:
-                    messagebox.showerror("EL Snapshot Error", f"Failed to take EL snapshot: {e}")
-                    return False
-                
-                finally:
-                    # Return to initial position
-                    move(self.motor, {EL_CAMERA_AXIS: str(int(EL_pulse))})
-                    
-                    # Restore original exposure
-                    self.exposure_var.set(original_exposure)  # Set back to 50ms
-                    self.set_exposure()
-                    self.update_status("Returned to initial position", "green")
-                
-                    self.lucam.set_properties(
-                        brightness=1.0,
-                        contrast=1.0,
-                        saturation=1.0,
-                        hue=0.0,
-                        gamma=1.0,
-                        exposure=original_exposure,
-                        gain=1.0,
-                    )
-                
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed during EL snapshot sequence: {e}")
-                self.update_status(f"EL snapshot sequence error: {e}", "red")
+    def _turn_capture_outputs_off(self) -> bool:
+        """Turn off both capture sources without skipping the second on error."""
+        success = True
+        for name, instrument in (
+            ("light", self.light_keithley),
+            ("probe", self.probe_keithley),
+        ):
+            if instrument is None:
+                continue
+            try:
+                set_keithley_output(instrument, False)
+                if self.output_state_changed is not None:
+                    self.output_state_changed(name, False)
+            except Exception as exc:
+                success = False
+                self.update_status(f"Failed to turn off {name} Keithley: {exc}", "red")
+        return success
+
+    def take_el_snapshot(self, show_comparison: bool = False) -> bool:
+        """Capture visible and EL images with safe source and motor cleanup."""
+        el_pulse = 28000
+        if not self.lucam or not self.motor:
+            messagebox.showerror("Error", "Camera or motor not initialized")
+            return False
+        if self.light_keithley is None or self.probe_keithley is None:
+            messagebox.showerror("Error", "Both Keithleys must be connected")
+            return False
+        try:
+            light_current = float(
+                self.light_keithley.query(":SOUR:CURR:LEV?").strip()
+            )
+            probe_current = float(
+                self.probe_keithley.query(":SOUR:CURR:LEV?").strip()
+            )
+        except Exception as exc:
+            messagebox.showerror("Error", f"Unable to verify Keithley currents: {exc}")
+            return False
+        if light_current == 0 or probe_current == 0:
+            messagebox.showerror("Error", "Apply non-zero light and probe currents first")
+            return False
+        if not all(self.info_vars[field].get() for field in self.info_vars):
+            messagebox.showerror("Error", "All fields must be filled in order to image")
+            return False
+        if not self.name_check():
+            return False
+
+        original_exposure = self.exposure_var.get()
+        initial_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]
+        self.capture_in_progress = True
+        camera_moved = False
+        return_move_ok = True
+        output_cleanup_ok = True
+        el_snapshot_ok = False
+
+        try:
+            if self.stop_requested is not None and self.stop_requested():
+                self.update_status("EL imaging stopped before capture", "red")
                 return False
+
+            # The probe energizes the die for both images. The light is needed
+            # only for the first, visible-light image.
+            set_keithley_output(self.probe_keithley, True)
+            if self.output_state_changed is not None:
+                self.output_state_changed("probe", True)
+            set_keithley_output(self.light_keithley, True)
+            if self.output_state_changed is not None:
+                self.output_state_changed("light", True)
+
+            visible_image = self.take_snapshot()
+            if visible_image is None:
+                return False
+
+            set_keithley_output(self.light_keithley, False)
+            if self.output_state_changed is not None:
+                self.output_state_changed("light", False)
+
+            self.update_status("Moving camera for EL image...", "black")
+            if not self._move_motor(str(-el_pulse)):
+                self.update_status("EL imaging cancelled during motor movement", "red")
+                return False
+            camera_moved = True
+            time.sleep(1)
+
+            self.lucam.set_properties(
+                brightness=1.0,
+                contrast=1.0,
+                saturation=1.0,
+                hue=0.0,
+                gamma=1.0,
+                exposure=800.0,
+                gain=3.9,
+            )
+            self.exposure_var.set(800.0)
+            self.set_exposure()
+
+            frameformat, _ = self.lucam.GetFormat()
+            snapshot_settings = self.lucam.default_snapshot()
+            raw_image = self.lucam.TakeSnapshot(snapshot_settings)
+            set_keithley_output(self.probe_keithley, False)
+            if self.output_state_changed is not None:
+                self.output_state_changed("probe", False)
+            height, width = raw_image.shape
+            el_image = np.empty((height, width, 3), dtype="uint8", order="C")
+            conversion = API.LUCAM_CONVERSION(
+                DemosaicMethod=API.LUCAM_DM_HIGHER_QUALITY,
+                CorrectionMatrix=API.LUCAM_CM_CUSTOM,
+            )
+
+            if not API.LucamConvertFrameToRgb24(
+                self.lucam._handle,
+                el_image,
+                raw_image.ctypes.data_as(API.pBYTE),
+                width,
+                height,
+                frameformat.pixelFormat,
+                ctypes.pointer(conversion),
+            ):
+                raise LucamError()
+
+            el_image = el_image[..., ::-1]
+            el_image = cv2.rotate(el_image, cv2.ROTATE_180)
+            el_image = np.flip(el_image, axis=1)
+
+            self.image_overlay(visible_image, el_image)
+            base_filename = "_".join(
+                self.info_vars[field].get() for field in self.info_fields
+            )
+            file_path = os.path.join(self.dir_path.get(), f"{base_filename}_EL.jpg")
+            plt.imsave(file_path, el_image)
+
+            el_snapshot_ok = True
+            self.update_status("EL snapshot sequence completed successfully", "green")
+        except Exception as exc:
+            messagebox.showerror("EL Snapshot Error", f"Failed to take EL snapshot: {exc}")
+            self.update_status(f"EL snapshot sequence error: {exc}", "red")
+        finally:
+            # De-energize the die before moving the camera or stage again.
+            output_cleanup_ok = self._turn_capture_outputs_off()
+
+            if camera_moved:
+                try:
+                    current_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]
+                    return_pulse = str(int(initial_position) - int(current_position))
+                    return_move_ok = self._move_motor(return_pulse)
+                    if not return_move_ok:
+                        self.update_status("EL return movement was stopped", "red")
+                except Exception as exc:
+                    return_move_ok = False
+                    self.update_status(f"Failed to return EL camera: {exc}", "red")
+
+            try:
+                self.exposure_var.set(original_exposure)
+                self.set_exposure()
+                self.lucam.set_properties(
+                    brightness=1.0,
+                    contrast=1.0,
+                    saturation=1.0,
+                    hue=0.0,
+                    gamma=1.0,
+                    exposure=original_exposure,
+                    gain=1.0,
+                )
+            except Exception as exc:
+                el_snapshot_ok = False
+                self.update_status(f"Failed to restore camera settings: {exc}", "red")
+            self.capture_in_progress = False
+
+        capture_ok = el_snapshot_ok and return_move_ok and output_cleanup_ok
+        if capture_ok and show_comparison:
+            self._show_el_comparison(visible_image, el_image)
+        return capture_ok
     
 
 def main():

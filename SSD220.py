@@ -5,7 +5,9 @@ Created on Thu Nov 28 16:00:03 2024
 @author: BenWatts, Steven Li
 """
 import time
-from typing import Literal
+from collections.abc import Callable
+from threading import Event
+from typing import Literal, Optional, Union
 
 import pyvisa
 from pyvisa.resources import MessageBasedResource
@@ -17,7 +19,7 @@ Point = dict[str, str]
 
 # Axis-keyed dictionaries keep multi-axis movement explicit and avoid relying
 # on list position meanings such as `[x, y]`.
-Pulse = dict[str, str | list[str]]
+Pulse = dict[str, Union[str, list[str]]]
 
 AXES: tuple[Axis, ...] = ("X", "Y", "Z", "U", "V", "W")
 
@@ -56,21 +58,22 @@ DEFAULT_LOW_SPEED: dict[str, str] = {
 }
 
 
-def set_res_gpib(address: str) -> MessageBasedResource:
-    """Open the SSD220 controller at the requested GPIB address.
+def set_res_gpib(address: str, bus: str = "1") -> MessageBasedResource:
+    """Open a message-based instrument at the requested GPIB address.
 
     Args:
         address: GPIB address number as a string, such as `"4"`.
+        bus: GPIB bus number as a string.
 
     Returns:
-        Open PyVISA message-based instrument resource for the controller.
+        Open PyVISA message-based instrument resource.
 
     Raises:
         ValueError: If the requested GPIB resource is not connected.
         TypeError: If the opened resource does not support message commands.
     """
     rm = pyvisa.ResourceManager()
-    resource_name = f"GPIB1::{address}::INSTR"
+    resource_name = f"GPIB{bus}::{address}::INSTR"
     resources = rm.list_resources()
 
     print(resources)
@@ -101,7 +104,7 @@ def _get_axis_pos(inst: MessageBasedResource, axis: Axis) -> str:
     return inst.query(f"AXI{axis}:POS?")
 
 
-def get_pos(inst: MessageBasedResource, axes: list[Axis] | None = None) -> Point:
+def get_pos(inst: MessageBasedResource, axes: Optional[list[Axis]] = None) -> Point:
     """Return the current controller position for selected axes.
 
     Args:
@@ -180,8 +183,8 @@ def _move_axis(
 def move(
     inst: MessageBasedResource,
     pulse: Pulse,
-    fast_speed: dict[str, str] | None = None,
-    low_speed: dict[str, str] | None = None,
+    fast_speed: Optional[dict[str, str]] = None,
+    low_speed: Optional[dict[str, str]] = None,
     wait: bool = True,
     reaction_time: float = 0.5,
     read_position: bool = True,
@@ -229,11 +232,164 @@ def move(
     return get_pos(inst) if read_position else {}
 
 
+def move_with_control(
+    inst: MessageBasedResource,
+    pulse: Pulse,
+    fast_speed: Optional[dict[str, str]] = None,
+    low_speed: Optional[dict[str, str]] = None,
+    stop_requested: Optional[Callable[[], bool]] = None,
+    resume_allowed: Optional[Event] = None,
+    stop_mode: str = "0",
+    poll_delay: float = 0.1,
+    reaction_time: float = 0.5,
+    poll_callback: Optional[Callable[[], None]] = None,
+) -> bool:
+    """Move by signed pulses while checking pause and stop controls.
+
+    Movement is started with ``wait=False`` so this helper can poll the
+    controller and react while an axis is still moving. If pause is requested,
+    the active axis is stopped, the helper waits for resume, recalculates the
+    remaining pulse distance, and continues toward the original target.
+
+    Args:
+        inst: Open PyVISA instrument resource for the SSD220 controller.
+        pulse: Signed relative pulse movement by axis.
+        fast_speed: Optional fast speeds as an axis dictionary.
+        low_speed: Optional low/start speeds as an axis dictionary.
+        stop_requested: Optional callback returning ``True`` when motion should
+            stop immediately.
+        resume_allowed: Optional event that is set while motion may continue.
+        stop_mode: SSD220 stop mode sent with ``AXI<axis>:STOP``.
+        poll_delay: Seconds to wait between motion-status checks.
+        reaction_time: Extra seconds to wait after each axis completes.
+        poll_callback: Optional callback run during polling, useful for GUI
+            event processing when this helper is called on Tk's main thread.
+
+    Returns:
+        ``True`` when all movement finishes normally, or ``False`` when stop is
+        requested.
+    """
+    fast_speed = DEFAULT_FAST_SPEED if fast_speed is None else fast_speed
+    low_speed = DEFAULT_LOW_SPEED if low_speed is None else low_speed
+
+    for axis, axis_pulses in pulse.items():
+        axis_pulses = [axis_pulses] if isinstance(axis_pulses, str) else axis_pulses
+        for axis_pulse in axis_pulses:
+            if not _move_axis_with_control(
+                inst,
+                axis,
+                str(axis_pulse),
+                fast_speed[axis],
+                low_speed[axis],
+                stop_requested=stop_requested,
+                resume_allowed=resume_allowed,
+                stop_mode=stop_mode,
+                poll_delay=poll_delay,
+                reaction_time=reaction_time,
+                poll_callback=poll_callback,
+            ):
+                return False
+
+    return True
+
+
+def _move_axis_with_control(
+    inst: MessageBasedResource,
+    axis: Axis,
+    pulse_value: str,
+    fast_speed: str,
+    low_speed: str,
+    stop_requested: Optional[Callable[[], bool]],
+    resume_allowed: Optional[Event],
+    stop_mode: str,
+    poll_delay: float,
+    reaction_time: float,
+    poll_callback: Optional[Callable[[], None]],
+) -> bool:
+    """Move one axis to a computed target while honoring stop/pause controls."""
+    target_position = int(_get_axis_pos(inst, axis).strip()) + int(pulse_value)
+
+    while True:
+        current_position = int(_get_axis_pos(inst, axis).strip())
+        remaining_pulse = target_position - current_position
+        if remaining_pulse == 0:
+            return True
+
+        if not _move_axis(inst, axis, str(remaining_pulse), fast_speed, low_speed):
+            return True
+
+        while int(inst.query(f"AXI{axis}:Motion?").strip()) == 1:
+            if _stop_is_requested(stop_requested):
+                _stop_axis(inst, axis, stop_mode, poll_delay, poll_callback)
+                return False
+
+            if resume_allowed is not None and not resume_allowed.is_set():
+                _stop_axis(inst, axis, stop_mode, poll_delay, poll_callback)
+                if not _wait_for_resume(
+                    stop_requested,
+                    resume_allowed,
+                    poll_delay,
+                    poll_callback,
+                ):
+                    return False
+                break
+
+            _run_poll_callback(poll_callback)
+            time.sleep(poll_delay)
+        else:
+            time.sleep(reaction_time)
+            return True
+
+
+def _stop_is_requested(stop_requested: Optional[Callable[[], bool]]) -> bool:
+    """Return whether a stop callback exists and is currently active."""
+    return stop_requested is not None and stop_requested()
+
+
+def _wait_for_resume(
+    stop_requested: Optional[Callable[[], bool]],
+    resume_allowed: Event,
+    poll_delay: float,
+    poll_callback: Optional[Callable[[], None]],
+) -> bool:
+    """Wait for resume while still checking for stop requests."""
+    while not resume_allowed.is_set():
+        if _stop_is_requested(stop_requested):
+            return False
+        _run_poll_callback(poll_callback)
+        time.sleep(poll_delay)
+    return True
+
+
+def _stop_axis(
+    inst: MessageBasedResource,
+    axis: Axis,
+    stop_mode: str,
+    poll_delay: float,
+    poll_callback: Optional[Callable[[], None]],
+) -> None:
+    """Stop one axis and wait until the controller reports motion complete."""
+    inst.write(f"AXI{axis}:STOP {stop_mode}")
+    while int(inst.query(f"AXI{axis}:Motion?").strip()) == 1:
+        _run_poll_callback(poll_callback)
+        time.sleep(poll_delay)
+
+
+def _run_poll_callback(poll_callback: Optional[Callable[[], None]]) -> None:
+    """Run an optional polling callback without letting GUI errors kill motion."""
+    if poll_callback is None:
+        return
+    try:
+        poll_callback()
+    except Exception:
+        pass
+
+
 def move_to_origin(
     inst: MessageBasedResource,
-    axes: list[Axis] | None = None,
-    fast_speed: dict[str, str] | None = None,
-    low_speed: dict[str, str] | None = None,
+    axes: Optional[list[Axis]] = None,
+    fast_speed: Optional[dict[str, str]] = None,
+    low_speed: Optional[dict[str, str]] = None,
     wait: bool = True,
     reaction_time: float = 0.5,
 ) -> Point:

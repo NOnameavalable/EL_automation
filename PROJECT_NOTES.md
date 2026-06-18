@@ -20,6 +20,40 @@ The complete hardware setup has five controlled axes across two machines:
 - U controls Machine B vertical movement.
 - W controls Machine B horizontal movement.
 
+The electrical setup uses two Keithley 2400 SourceMeters, both configured as
+current sources:
+
+- The wafer-probe Keithley controls current through the probed wafer/device and
+  should use a voltage compliance of `2.5 V`.
+- The light/EL Keithley controls the illumination or EL current used during
+  image capture and should use a voltage compliance of `15 V`.
+- The user should be able to set the current level for each Keithley from the
+  GUI/configuration before output is enabled.
+- When the main stage GUI opens, connect to both Keithleys and configure their
+  fixed operating settings: current-source mode, the appropriate source and
+  measurement ranges, front/rear terminals, output-off mode, and voltage
+  compliance (`2.5 V` for the wafer probe and `15 V` for EL illumination).
+- Startup configuration must leave both outputs off and use a `0 A` current
+  level until the user enters a valid current level. Entering a level must not
+  enable either output; the workflow enables each output only when required.
+
+For each die, the Keithley output sequence is:
+
+1. Move X/Y to the die and move Z down to the recorded contact position.
+2. Turn on the wafer-probe Keithley after contact is established.
+3. Take the visible-light image while the probe Keithley remains on.
+4. Turn off the light Keithley.
+5. Take the EL image while the probe Keithley remains on.
+6. Turn off the probe Keithley before retracting Z or moving to another die.
+
+The probe output must also be turned off during stop, cancellation, and error
+cleanup paths.
+
+The workflow does not need to record Keithley voltage/current measurements for
+each die. Keithley queries may still be used transiently for output-state,
+compliance, or error checks, but measurement readings are not saved with the
+die images or results.
+
 The intended workflow is:
 
 1. Start the stepper/controller.
@@ -54,15 +88,27 @@ die_2 = [x_offset, y_offset]
 die_3 = [x_offset, y_offset]
 ```
 
+When the sequence advances to the second die row, apply an additional
+`Y +5 mm` offset exactly once during the row transition, not once per die.
+On this machine, positive Y is the physical rightward direction for this row
+transition. After the one-time offset, continue with the normal within-row die
+spacing. Convert the 5 mm distance to controller pulses using the calibrated
+Y-axis pulse-to-distance value.
+
+The wafer-probe current direction must also reverse for the second row. Keep
+the physical HI/LO wiring fixed and represent the reversal with the sign of the
+probe Keithley current level: use the configured current magnitude in the
+first row and its negative value in the second row. Turn the probe output off
+before changing polarity, and never change polarity while the probe output is
+enabled.
+
 ### TODO
 
-- [x] Let the user select the die configuration CSV file and automatically fill the die configuration information during the Yelo/EL workflow.
-- [ ] Rework Yelo motor movement to use an interruptible movement helper that sends `STOP 0` and checks pause/stop while the motor is still moving, instead of only checking between movement calls.
 - [ ] 3D print camera stander.
 - [ ] Test if the stage moves linearly.
 - [ ] Buy auto light controller.
 - [ ] Set up the devices.
-- [ ] Connect to Keithley.
+- [ ] Configure the probe Keithley GPIB address and hardware-test both Keithley connections and output sequences.
 - [ ] Optimize the functions on the GUI.
 - [ ] Clean `el_station.py`.
 - [ ] Make the EL Station window open quickly by showing the GUI first, then initializing the motor/camera asynchronously or after the window appears with a connection status message.
@@ -80,45 +126,6 @@ while the axis is moving:
 ```
 
 This would move the control logic into one helper, such as `move_with_control(...)`, instead of repeating stop/pause checks around every movement in `main()`. It should improve Stop responsiveness during long motor moves. Camera snapshot calls may still remain blocking unless the Lucam SDK provides a cancel/abort operation.
-
-### Change History
-
-- Added `Steven Li` to the `SSD220.py` author line.
-- Changed function and variable naming in `SSD220.py` toward lowercase style.
-- Renamed instrument-handle variables to `inst`.
-- Added docstrings and type contracts to the SSD220 functions.
-- Removed the custom `VisaInstrument` protocol and typed instrument handles as PyVISA `MessageBasedResource`.
-- Added error handling in `set_res_gpib()` when the requested GPIB resource is not present.
-- Changed `set_res_gpib()` to use the address argument instead of always opening `GPIB0::4::INSTR`.
-- Added a `Point` type alias for X/Y stage coordinates.
-- Changed `get_pos()` so it returns the current stage coordinate as `[x, y]`.
-- Made single-axis helper functions private with leading underscores.
-- Reworked movement toward a pulse-based public API using `move(inst, pulse)`.
-- Added private `_move_in_x()` and `_move_in_y()` helpers to hide the controller-specific X/Y commands.
-- Updated `move()` to avoid mutable default list arguments by using `None` defaults for speed lists.
-- Changed `move()` to take relative X/Y pulse distances as input because the original controller workflow uses `PULS ... :GO ...` to control how far the motors move.
-- Added `move_to_origin()` to move the stage back to the startup origin `[0, 0]`.
-- Added a `DieLayout` class in `YeloModuleImageCapture.py` to model die row/group spacing and support future fixture/layout changes.
-- Left `div()` unchanged for now until driver-division behavior is confirmed during calibration cleanup.
-- Removed Machine A/B axis group constants from `SSD220.py`; machine grouping belongs in GUI/workflow code, not the low-level controller wrapper.
-- Simplified SSD220 direction constants because every axis currently uses positive pulse as `CW` and negative pulse as `CCW`.
-- Updated `stage_gui.py` so each triangle pad is configured with horizontal and vertical axes; Machine A uses X/Y and Machine B uses W/U.
-- Updated GUI jog control to use `move(..., wait=False, read_position=False)` with a large pulse on mouse press, then send `AXI<axis>:STOP 0` on mouse release.
-- Connected the GUI speed slider to jog speed scaling: slider value `50` uses `SSD220.py` default fast/low speeds, lower values slow down, and higher values speed up.
-- Added a GUI `Start` button that runs `YeloModuleImageCapture.main()` in a background thread.
-- Added GUI `Set Home` and `Set Contact` buttons. `Set Home` records current X/Y as the workflow home, and `Set Contact` records current Z as the contact height.
-- Linked `stage_gui.py` to `YeloModuleImageCapture.py` so the GUI passes the existing stage connection, recorded home, and recorded contact Z into the Yelo main sequence.
-- Changed the Yelo sequence to return to the recorded home position instead of controller startup origin.
-- Updated `Set Home` to record X/Y/Z. Before starting Yelo, the GUI moves Z back to the recorded home Z, and Yelo still moves Z back after every die.
-- Removed Yelo fallback behavior for missing home/contact values. The GUI initializes home as controller origin but still requires the user to click `Set Home` before `Set Contact` or `Start`.
-- Enforced the setup order in the GUI: adjust stage position, click `Set Home`, then click `Set Contact`, then start the sequence.
-- Updated the GUI to call `set_res_gpib()` when the window opens instead of waiting for the first button click.
-- Removed redundant GUI startup-connection wrapper code, unused Yelo imports, and the unused placeholder `homing()` function in `SSD220.py`.
-- Added a monitor window to the right of the pads in `stage_gui.py` and routed operation messages through it while keeping the bottom status as the latest message.
-- Removed V from the configured SSD220 axes because the current setup does not have a V axis.
-- Added GUI `Stop` and `Move Home` buttons. `Stop` sends `STOP 0` to every configured axis, and `Move Home` moves all configured axes back to the recorded home position.
-- Added TODO to centralize hardware initialization for the two separate GPIB devices while keeping them assigned to separate variables for workflow flexibility.
-- Connected the Yelo workflow to EL capture failure reporting: `take_el_snapshot()` now returns `False` for EL station error/cancel paths and Yelo moves home and stops when EL capture returns `False`.
 
 ### Current SSD220 Direction
 
