@@ -37,7 +37,8 @@ WINDOW_BACKGROUND = "#f4f4f4"
 PAD_HEIGHT = 168
 DirectionSign = Literal["1", "-1"]
 GPIB_ADDRESS = "3"
-KEITHLEY_GPIB_BUS = "1"
+KEITHLEY_GPIB_BUS = "0"
+MOTOR_GPIB_BUS = "0"
 LIGHT_KEITHLEY_ADDRESS = "13"
 PROBE_KEITHLEY_ADDRESS = ""  # Set this before enabling automated EL capture.
 LIGHT_COMPLIANCE_V = 15.0
@@ -815,7 +816,7 @@ class StageGui(tk.Tk):
         if self._stage_inst is None:
             self._log("Connecting to stage...")
             self.update_idletasks()
-            self._stage_inst = set_res_gpib(GPIB_ADDRESS)
+            self._stage_inst = set_res_gpib(GPIB_ADDRESS, MOTOR_GPIB_BUS)
             set_all_axes_speed_table(self._stage_inst)
         return self._stage_inst
 

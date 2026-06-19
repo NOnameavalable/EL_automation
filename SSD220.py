@@ -58,7 +58,7 @@ DEFAULT_LOW_SPEED: dict[str, str] = {
 }
 
 
-def set_res_gpib(address: str, bus: str = "1") -> MessageBasedResource:
+def set_res_gpib(address: str, bus: str = "0") -> MessageBasedResource:
     """Open a message-based instrument at the requested GPIB address.
 
     Args:
