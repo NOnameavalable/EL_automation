@@ -170,7 +170,7 @@ def main(
         die_spacing=9000,
         group_gap=12500,
         row_spacing=32500,
-        second_row_y_offset=5000,
+        second_row_y_offset=-5000,
     )
     die_positions = layout.die_positions()
     travel_order = die_travel_order(32)

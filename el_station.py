@@ -961,11 +961,7 @@ class LucamStreamApp:
                 self.update_status("EL imaging stopped before capture", "red")
                 return False
 
-            # The probe energizes the die for both images. The light is needed
-            # only for the first, visible-light image.
-            set_keithley_output(self.probe_keithley, True)
-            if self.output_state_changed is not None:
-                self.output_state_changed("probe", True)
+            # Use only the light source for the visible-light image.
             set_keithley_output(self.light_keithley, True)
             if self.output_state_changed is not None:
                 self.output_state_changed("light", True)
@@ -999,6 +995,11 @@ class LucamStreamApp:
 
             frameformat, _ = self.lucam.GetFormat()
             snapshot_settings = self.lucam.default_snapshot()
+            # Energize the die only after the light is off and immediately
+            # before taking the EL image.
+            set_keithley_output(self.probe_keithley, True)
+            if self.output_state_changed is not None:
+                self.output_state_changed("probe", True)
             raw_image = self.lucam.TakeSnapshot(snapshot_settings)
             set_keithley_output(self.probe_keithley, False)
             if self.output_state_changed is not None:
