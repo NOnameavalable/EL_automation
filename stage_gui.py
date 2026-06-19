@@ -43,7 +43,7 @@ LIGHT_KEITHLEY_ADDRESS = "13"
 PROBE_KEITHLEY_ADDRESS = ""  # Set this before enabling automated EL capture.
 LIGHT_COMPLIANCE_V = 15.0
 PROBE_COMPLIANCE_V = 2.5
-KEITHLEY_CURRENT_RANGE_A = 0.1
+KEITHLEY_CURRENT_RANGE_A = 1.0
 JOG_PULSE = "1000000"
 STOP_MODE = "0"
 REFERENCE_SLIDER_SPEED = 50
@@ -343,14 +343,19 @@ class StageGui(tk.Tk):
         keithley_frame.grid(row=4, column=0, columnspan=4, pady=(10, 0))
 
         tk.Label(keithley_frame, text="Light current (mA):", bg=WINDOW_BACKGROUND).pack(side=tk.LEFT)
-        tk.Entry(keithley_frame, textvariable=self.light_current_ma, width=9).pack(side=tk.LEFT, padx=(5, 12))
+        tk.Entry(keithley_frame, textvariable=self.light_current_ma, width=9).pack(side=tk.LEFT, padx=5)
+        tk.Button(
+            keithley_frame,
+            text="Apply Light",
+            command=self._apply_light_current,
+        ).pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(keithley_frame, text="Probe current (mA):", bg=WINDOW_BACKGROUND).pack(side=tk.LEFT)
         tk.Entry(keithley_frame, textvariable=self.probe_current_ma, width=9).pack(side=tk.LEFT, padx=5)
         tk.Button(
             keithley_frame,
-            text="Apply Currents",
-            command=self._apply_keithley_current_levels,
-        ).pack(side=tk.LEFT, padx=(7, 0))
+            text="Apply Probe",
+            command=self._apply_probe_current,
+        ).pack(side=tk.LEFT)
 
         output_frame = tk.Frame(pad_frame, bg=WINDOW_BACKGROUND)
         output_frame.grid(row=5, column=0, columnspan=4, pady=(8, 0))
@@ -858,40 +863,59 @@ class StageGui(tk.Tk):
             self._probe_keithley = None
             self._log(f"Probe Keithley connection error: {exc}")
 
-    def _apply_keithley_current_levels(self) -> None:
-        """Validate GUI values and apply them without enabling either output."""
+    def _apply_light_current(self) -> None:
+        """Apply only the user-entered light current level."""
+        self._apply_keithley_current("light")
+
+    def _apply_probe_current(self) -> None:
+        """Apply only the user-entered probe current level."""
+        self._apply_keithley_current("probe")
+
+    def _apply_keithley_current(self, device: str) -> None:
+        """Validate and apply one current level without enabling its output."""
         if self._main_running or (
             self.el_app is not None and self.el_app.capture_in_progress
         ):
             self._log("Current levels cannot be changed during a capture sequence")
             return
-        if self._light_keithley is None or self._probe_keithley is None:
-            self._log("Both Keithleys must be connected before applying currents")
+
+        if device == "light":
+            instrument = self._light_keithley
+            current_text = self.light_current_ma.get()
+            display_name = "Light"
+        elif device == "probe":
+            instrument = self._probe_keithley
+            current_text = self.probe_current_ma.get()
+            display_name = "Probe"
+        else:
+            raise ValueError(f"Unknown Keithley device: {device}")
+
+        if instrument is None:
+            self._log(f"{display_name} Keithley is not connected")
             return
 
         try:
-            light_current_a = float(self.light_current_ma.get()) / 1000.0
-            probe_current_a = float(self.probe_current_ma.get()) / 1000.0
-            if light_current_a <= 0 or probe_current_a <= 0:
-                raise ValueError("Current levels must be greater than 0 mA")
+            current_a = float(current_text) / 1000.0
+            if current_a <= 0:
+                raise ValueError("Current level must be greater than 0 mA")
 
-            self._set_keithley_outputs_off()
-            set_keithley_current(self._light_keithley, light_current_a)
-            set_keithley_current(self._probe_keithley, probe_current_a)
+            set_keithley_output(instrument, False)
+            self._set_output_button_state(device, False)
+            set_keithley_current(instrument, current_a)
         except (TypeError, ValueError, RuntimeError) as exc:
-            self._log(f"Invalid Keithley current: {exc}")
+            self._log(f"Invalid {display_name.lower()} current: {exc}")
             return
         except Exception as exc:
-            self._log(f"Set Keithley current error: {exc}")
+            self._log(f"Set {display_name.lower()} current error: {exc}")
             return
 
-        self._light_current_a = light_current_a
-        self._probe_current_magnitude_a = probe_current_a
-        self._probe_polarity = 1
-        self._log(
-            f"Keithley currents set: light={light_current_a * 1000:g} mA, "
-            f"probe={probe_current_a * 1000:g} mA; outputs remain off"
-        )
+        if device == "light":
+            self._light_current_a = current_a
+        else:
+            self._probe_current_magnitude_a = current_a
+            self._probe_polarity = 1
+
+        self._log(f"{display_name} current set to {current_a * 1000:g} mA; output remains off")
 
     def _toggle_keithley_output(self, device: str) -> None:
         """Toggle one Keithley output for manual hardware control."""
