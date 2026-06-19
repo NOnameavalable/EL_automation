@@ -218,7 +218,7 @@ def main(
                 print("Stop requested before EL capture. Moving to home.")
                 _move_to_home(stage, home_position)
                 return
-            if capture_el(die) is False:
+            if not capture_el(die):
                 print("EL capture failed or was cancelled. Moving to home.")
                 _move_to_home(stage, home_position)
                 return

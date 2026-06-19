@@ -945,7 +945,8 @@ class LucamStreamApp:
             messagebox.showerror("Error", "All fields must be filled in order to image")
             return False
         if not self.name_check():
-            return False
+            self.update_status("Existing files kept; capture skipped", "orange")
+            return True
 
         original_exposure = self.exposure_var.get()
         initial_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]

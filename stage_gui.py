@@ -651,8 +651,8 @@ class StageGui(tk.Tk):
 
                 die_info = self.die_config.get(die)
                 if die_info is None:
-                    self._log(f"No CSV configuration found for die {die}; using current EL fields")
-                    result["value"] = self.el_app.take_el_snapshot(show_comparison=False)
+                    self._log(f"No CSV configuration found for die {die}; skipping die")
+                    result["value"] = True
                     return
 
                 full_id, notes = die_info
