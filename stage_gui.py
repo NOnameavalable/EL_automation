@@ -380,11 +380,11 @@ class StageGui(tk.Tk):
         )
         machine_a.grid(row=1, column=1, padx=12)
 
-        # Machine B pad: W/U movement for the right machine. The Z up/down
+        # Machine B pad: V/U movement for the right machine. The Z up/down
         # control is added into the center of this same pad below.
         machine_b = TrianglePad(
             pad_frame,
-            horizontal_axis="W",
+            horizontal_axis="V",
             vertical_axis="U",
             on_press=lambda axis, sign: self._start_jog(
                 "Machine B",
