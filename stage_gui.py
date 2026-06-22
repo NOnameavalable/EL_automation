@@ -55,7 +55,7 @@ MAX_LOW_SPEED = 9999
 
 # These axes are mounted opposite to the current button intuition. Invert their
 # signs so pressing left/up moves the hardware left/up from the user's view.
-REVERSED_BUTTON_AXES: set[Axis] = {"Y", "Z", "W"}
+REVERSED_BUTTON_AXES: set[Axis] = {"X", "Z", "W"}
 
 
 class TrianglePad(tk.Frame):
