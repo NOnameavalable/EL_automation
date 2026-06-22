@@ -40,7 +40,7 @@ NEGATIVE_DIRECTION: Direction = "CCW"
 REVERSED_DIRECTION_AXES: set[Axis] = {"V"}
 
 DEFAULT_FAST_SPEED: dict[str, str] = {
-    "X": "2400",
+    "X": "70000",
     "Y": "1000",
     "Z": "100000",
     "U": "1000",
@@ -49,7 +49,7 @@ DEFAULT_FAST_SPEED: dict[str, str] = {
 }
 
 DEFAULT_LOW_SPEED: dict[str, str] = {
-    "X": "500",
+    "X": "5000",
     "Y": "500",
     "Z": "5000",
     "U": "500",

@@ -1071,6 +1071,11 @@ class LucamStreamApp:
             self.capture_in_progress = False
 
         capture_ok = el_snapshot_ok and return_move_ok and output_cleanup_ok
+        if capture_ok:
+            set_keithley_output(self.light_keithley, True)
+            if self.output_state_changed is not None:
+                self.output_state_changed("light", True)
+
         if capture_ok and show_comparison:
             self._show_el_comparison(visible_image, el_image)
         return capture_ok
