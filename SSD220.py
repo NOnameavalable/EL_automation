@@ -45,7 +45,7 @@ DEFAULT_FAST_SPEED: dict[str, str] = {
     "Z": "100000",
     "U": "1000",
     "V": "5000",
-    "W": "2400",
+    "W": "10000",
 }
 
 DEFAULT_LOW_SPEED: dict[str, str] = {
@@ -54,7 +54,7 @@ DEFAULT_LOW_SPEED: dict[str, str] = {
     "Z": "5000",
     "U": "500",
     "V": "1000",
-    "W": "500",
+    "W": "5000",
 }
 
 
