@@ -24,6 +24,7 @@ from SSD220 import (
     AXES,
     DEFAULT_FAST_SPEED,
     DEFAULT_LOW_SPEED,
+    convert_axis_pulse,
     get_pos,
     move,
     set_all_axes_speed_table,
@@ -52,11 +53,6 @@ DIE_CONFIG_HEADER_ROW = 14
 DIE_CONFIG_DATA_ROWS = 16
 MAX_FAST_SPEED = 999999
 MAX_LOW_SPEED = 9999
-
-# These axes are mounted opposite to the current button intuition. Invert their
-# signs so pressing left/up moves the hardware left/up from the user's view.
-REVERSED_BUTTON_AXES: set[Axis] = {"X", "Z", "W"}
-
 
 class TrianglePad(tk.Frame):
     """Four-button triangle pad arranged like a gamepad directional control."""
@@ -130,9 +126,7 @@ class TrianglePad(tk.Frame):
             if direction in {"left", "right"}
             else self._vertical_axis
         )
-        sign: DirectionSign = "1" if direction in {"right", "down"} else "-1"
-        if axis in REVERSED_BUTTON_AXES:
-            sign = "-1" if sign == "1" else "1"
+        sign: DirectionSign = "1" if direction in {"right", "up"} else "-1"
         self._on_press(axis, sign)
 
     @staticmethod
@@ -204,12 +198,12 @@ class SplitCircleButton(tk.Canvas):
         self.create_polygon(36, 18, 28, 30, 44, 30, fill="white")
         self.create_polygon(28, 42, 44, 42, 36, 54, fill="white")
 
-        # Z is reversed so the upper half sends the negative sign and moves up.
-        self.tag_bind(top_half, "<ButtonPress-1>", lambda _event: self._on_press("Z", "-1"))
+        # Positive Z moves up; negative Z moves down.
+        self.tag_bind(top_half, "<ButtonPress-1>", lambda _event: self._on_press("Z", "1"))
         self.tag_bind(
             bottom_half,
             "<ButtonPress-1>",
-            lambda _event: self._on_press("Z", "1"),
+            lambda _event: self._on_press("Z", "-1"),
         )
 
 
@@ -386,11 +380,11 @@ class StageGui(tk.Tk):
         )
         machine_a.grid(row=1, column=1, padx=12)
 
-        # Machine B pad: V/U movement for the right machine. The Z up/down
+        # Machine B pad: W/U movement for the right machine. The Z up/down
         # control is added into the center of this same pad below.
         machine_b = TrianglePad(
             pad_frame,
-            horizontal_axis="V",
+            horizontal_axis="W",
             vertical_axis="U",
             on_press=lambda axis, sign: self._start_jog(
                 "Machine B",
@@ -510,7 +504,10 @@ class StageGui(tk.Tk):
             stage_inst = self._get_stage_inst()
             current_position = get_pos(stage_inst)
             pulse_to_home = {
-                axis: str(int(self.home_position[axis]) - int(current_position[axis]))
+                axis: convert_axis_pulse(
+                    axis,
+                    int(self.home_position[axis]) - int(current_position[axis]),
+                )
                 for axis in AXES
             }
             move(stage_inst, pulse_to_home, read_position=False)
@@ -608,7 +605,12 @@ class StageGui(tk.Tk):
             home_z = self.home_position["Z"]
             move(
                 stage_inst,
-                {"Z": str(int(home_z) - int(current_z))},
+                {
+                    "Z": convert_axis_pulse(
+                        "Z",
+                        int(home_z) - int(current_z),
+                    )
+                },
                 read_position=False,
             )
             run_yelo_main(

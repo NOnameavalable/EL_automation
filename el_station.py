@@ -14,7 +14,13 @@ import time
 from PIL import Image
 from pyvisa.resources import MessageBasedResource
 from Keithley2400 import set_keithley_output
-from SSD220 import get_pos, move, move_with_control, set_res_gpib
+from SSD220 import (
+    convert_axis_pulse,
+    get_pos,
+    move,
+    move_with_control,
+    set_res_gpib,
+)
 
 EL_CAMERA_AXIS = "W"
 
@@ -282,7 +288,7 @@ class LucamStreamApp:
             return
         try:
             steps = self.steps_var.get()
-            if not self._move_motor(str(-int(steps))):
+            if not self._move_motor(str(int(steps))):
                 self.update_status("Move up cancelled", "red")
                 return
             self.update_status("Moved up successfully", "green")
@@ -295,7 +301,7 @@ class LucamStreamApp:
             return
         try:
             steps = self.steps_var.get()
-            if not self._move_motor(str(int(steps))):
+            if not self._move_motor(str(-int(steps))):
                 self.update_status("Move down cancelled", "red")
                 return
             self.update_status("Moved down successfully", "green")
@@ -308,7 +314,7 @@ class LucamStreamApp:
             return
         try:
             steps = self.fine_steps_var.get()
-            if not self._move_motor(str(-int(steps))):
+            if not self._move_motor(str(int(steps))):
                 self.update_status("Move up fine cancelled", "red")
                 return
             self.update_status("Moved up fine successfully", "green")
@@ -321,7 +327,7 @@ class LucamStreamApp:
             return
         try:
             steps = self.fine_steps_var.get()
-            if not self._move_motor(str(int(steps))):
+            if not self._move_motor(str(-int(steps))):
                 self.update_status("Move down fine cancelled", "red")
                 return
             self.update_status("Moved down fine successfully", "green")
@@ -369,7 +375,7 @@ class LucamStreamApp:
             self.master.update()
             
             # First step up (2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(step_size))})
+            move(self.motor, {EL_CAMERA_AXIS: str(int(step_size))})
             time.sleep(0.5)  # Wait for stability
             up1_position = 2500
             up1_position_value = int(up1_position)
@@ -385,7 +391,7 @@ class LucamStreamApp:
             self.master.update()
             
             # Second step up (another 2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(step_size))})
+            move(self.motor, {EL_CAMERA_AXIS: str(int(step_size))})
             time.sleep(0.5)  # Wait for stability
             up2_position = 5000
             up2_position_value = int(up2_position)
@@ -401,11 +407,11 @@ class LucamStreamApp:
             self.master.update()
             
             # Move back to initial position
-            move(self.motor, {EL_CAMERA_AXIS: str(int(2 * step_size))})
+            move(self.motor, {EL_CAMERA_AXIS: str(-int(2 * step_size))})
             time.sleep(0.5)  # Wait for stability
             
             # First step down (2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(int(step_size))})
+            move(self.motor, {EL_CAMERA_AXIS: str(-int(step_size))})
             time.sleep(0.5)  # Wait for stability
             down1_position = -2500
             down1_position_value = int(down1_position)
@@ -421,7 +427,7 @@ class LucamStreamApp:
             self.master.update()
             
             # Second step down (another 2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(int(step_size))})
+            move(self.motor, {EL_CAMERA_AXIS: str(-int(step_size))})
             time.sleep(0.5)  # Wait for stability
             down2_position = -5000
             down2_position_value = int(down2_position)
@@ -443,18 +449,14 @@ class LucamStreamApp:
             best_score = scores[best_score_index]
             
                                 
-            if best_position > 0:
-                best_dir = 'CCW'
-            else: best_dir = 'CW'
-            
             time.sleep(0.4)
-            move(self.motor, {EL_CAMERA_AXIS: str(-5000)})
+            move(self.motor, {EL_CAMERA_AXIS: str(5000)})
             time.sleep(1.4)
             # If best focus is at one of the extremes, move there but warn user
             if best_score_index == 0 or best_score_index == 4:
                 # Move to the position with best focus
                 self.update_status(f"Best focus at extreme position: {best_position}, moving there...", "orange")
-                move(self.motor, {EL_CAMERA_AXIS: str(abs(int(best_position)) if best_dir == "CW" else -abs(int(best_position)))})
+                move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
                 
                 self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
                 self.update_status(f"Focus optimization complete. Best at extreme: {best_score:.2f}", "orange")
@@ -493,12 +495,9 @@ class LucamStreamApp:
                         min_pos = min(positions)
                         max_pos = max(positions)
                         if min_pos <= estimated_best_position <= max_pos:
-                            if estimated_best_position > 0:
-                                best_dir = 'CCW'
-                            else: best_dir = 'CW'
                             # Move to the estimated best position
                             self.update_status(f"Moving to estimated best position: {estimated_best_position}...", "black")
-                            move(self.motor, {EL_CAMERA_AXIS: str(abs(int(best_position)) if best_dir == "CW" else -abs(int(best_position)))})
+                            move(self.motor, {EL_CAMERA_AXIS: str(estimated_best_position)})
                             
                             # Take a snapshot at the estimated best position and check focus
                             time.sleep(0.5)
@@ -510,19 +509,19 @@ class LucamStreamApp:
                         else:
                             # If estimated position is outside our range, move to the best known position
                             self.update_status(f"Estimated position out of range, moving to best known position...", "black")
-                            move(self.motor, {EL_CAMERA_AXIS: str(abs(int(best_position)) if best_dir == "CW" else -abs(int(best_position)))})
+                            move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
                             self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
                             self.update_status(f"Focus optimization complete. Best score: {best_score:.2f}", "green")
                     else:
                         # If parabola opens upward, can't find a maximum - use best known position
                         self.update_status(f"Cannot determine best focus, moving to best known position...", "black")
-                        move(self.motor, {EL_CAMERA_AXIS: str(abs(int(best_position)) if best_dir == "CW" else -abs(int(best_position)))})
+                        move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
                         self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
                         self.update_status(f"Focus optimization complete. Best score: {best_score:.2f}", "green")
                 except:
                     # If curve fitting fails, fall back to best known position
                     self.update_status(f"Error in focus estimation, moving to best known position...", "black")
-                    move(self.motor, {EL_CAMERA_AXIS: str(abs(int(best_position)) if best_dir == "CW" else -abs(int(best_position)))})
+                    move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
                     self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
                     self.update_status(f"Focus optimization complete. Best score: {best_score:.2f}", "green")
             
@@ -565,9 +564,7 @@ class LucamStreamApp:
             scores = []
             
             for i,position in enumerate(positions):
-                if pulse_send[i] >= 0: direction = 'CCW'
-                elif pulse_send[i] < 0: direction = 'CW'
-                move(self.motor, {EL_CAMERA_AXIS: str(abs(int(pulse_send[i])) if direction == "CW" else -abs(int(pulse_send[i])))})
+                move(self.motor, {EL_CAMERA_AXIS: str(int(pulse_send[i]))})
                 time.sleep(0.3)
                 snapshot = self.lucam.TakeSnapshot()
                 current_score = self.calculate_focus(snapshot)
@@ -584,7 +581,7 @@ class LucamStreamApp:
             best_score = scores[best_score_index]
             
             travel_pulse = best_position - (-(step_size*6))
-            move(self.motor, {EL_CAMERA_AXIS: str(-abs(int(travel_pulse)))})
+            move(self.motor, {EL_CAMERA_AXIS: str(int(travel_pulse))})
             
             
             
@@ -975,7 +972,7 @@ class LucamStreamApp:
                 self.output_state_changed("light", False)
 
             self.update_status("Moving camera for EL image...", "black")
-            if not self._move_motor(str(-el_pulse)):
+            if not self._move_motor(str(el_pulse)):
                 self.update_status("EL imaging cancelled during motor movement", "red")
                 return False
             camera_moved = True
@@ -1045,7 +1042,10 @@ class LucamStreamApp:
             if camera_moved:
                 try:
                     current_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]
-                    return_pulse = str(int(initial_position) - int(current_position))
+                    return_pulse = convert_axis_pulse(
+                        EL_CAMERA_AXIS,
+                        int(initial_position) - int(current_position),
+                    )
                     return_move_ok = self._move_motor(return_pulse)
                     if not return_move_ok:
                         self.update_status("EL return movement was stopped", "red")

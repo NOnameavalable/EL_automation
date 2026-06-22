@@ -11,6 +11,7 @@ import time
 from threading import Event
 from typing import Optional
 from SSD220 import div
+from SSD220 import convert_axis_pulse
 from SSD220 import get_pos
 from SSD220 import move
 from SSD220 import move_with_control
@@ -126,7 +127,10 @@ def _relative_pulse(current: Point, target: Point) -> dict[str, str]:
     """
     x_um = int(target[0]) - int(current[0])
     y_um = int(target[1]) - int(current[1])
-    return {"X": _um_to_pulse(x_um, X_UM_PER_PULSE), "Y": str(-1 * int(_um_to_pulse(y_um, Y_UM_PER_PULSE)))}
+    return {
+        "X": _um_to_pulse(x_um, X_UM_PER_PULSE),
+        "Y": _um_to_pulse(y_um, Y_UM_PER_PULSE),
+    }
 
 
 def _move_to_home(stage: MessageBasedResource, home_position: dict[str, str]) -> None:
@@ -134,7 +138,10 @@ def _move_to_home(stage: MessageBasedResource, home_position: dict[str, str]) ->
     axes = list(home_position)
     current_position = get_pos(stage, axes)
     pulse_to_home = {
-        axis: str(int(home_position[axis]) - int(current_position[axis]))
+        axis: convert_axis_pulse(
+            axis,
+            int(home_position[axis]) - int(current_position[axis]),
+        )
         for axis in axes
     }
     move(stage, pulse_to_home, read_position=False)
@@ -186,7 +193,10 @@ def main(
         target_position = die_positions[die]
         xy_pulse = _relative_pulse(current_position, target_position)
         current_z = get_pos(stage, ["Z"])["Z"]
-        z_down = str(int(contact_z) - int(current_z))
+        z_down = convert_axis_pulse(
+            "Z",
+            int(contact_z) - int(current_z),
+        )
         z_up = str(-int(z_down))
         print(
             f"Moving to die {die}: position={target_position}, "

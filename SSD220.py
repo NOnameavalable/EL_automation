@@ -34,10 +34,18 @@ AXIS_INDEX: dict[str, str] = {
 
 SPEED_TABLE_INDEX = "0"
 
-# Positive/negative pulse signs are converted to the controller's direction words.
-POSITIVE_DIRECTION: Direction = "CW"
-NEGATIVE_DIRECTION: Direction = "CCW"
-REVERSED_DIRECTION_AXES: set[Axis] = {"V"}
+# Assign the controller direction used for a positive logical pulse on each
+# axis. A negative logical pulse automatically uses the opposite direction.
+POSITIVE_DIRECTION_BY_AXIS: dict[Axis, Direction] = {
+    "X": "CCW",
+    "Y": "CCW",
+    "Z": "CCW",
+    "U": "CCW",
+    "V": "CCW",
+    "W": "CCW",
+}
+CONTROLLER_POSITIVE_DIRECTION: Direction = "CW"
+CONTROLLER_NEGATIVE_DIRECTION: Direction = "CCW"
 
 DEFAULT_FAST_SPEED: dict[str, str] = {
     "X": "70000",
@@ -141,6 +149,19 @@ def _mot_wait(
     time.sleep(reaction_time)
 
 
+def convert_axis_pulse(
+    axis: Axis,
+    pulse_value: Union[str, int],
+) -> str:
+    """Convert between logical and controller-coordinate pulse signs.
+
+    The conversion is its own inverse because it only changes the sign. It is
+    used both before movement and for deltas calculated from `POS?`.
+    """
+    multiplier = 1 if POSITIVE_DIRECTION_BY_AXIS[axis] == "CW" else -1
+    return str(int(pulse_value) * multiplier)
+
+
 def _move_axis(
     inst: MessageBasedResource,
     axis: Axis,
@@ -153,8 +174,7 @@ def _move_axis(
     Args:
         inst: Open PyVISA instrument resource for the SSD220 controller.
         axis: Axis to move.
-        pulse_value: Signed pulse distance as a string. Negative values are
-            converted to the controller's negative direction.
+        pulse_value: Signed pulse distance in controller coordinates.
         fast_speed: Fast speed sent to the controller.
         low_speed: Low/start speed sent to the controller.
 
@@ -167,9 +187,11 @@ def _move_axis(
         return False
 
     # The controller expects a positive pulse count plus a separate direction.
-    direction = POSITIVE_DIRECTION if pulse > 0 else NEGATIVE_DIRECTION
-    if axis in REVERSED_DIRECTION_AXES:
-        direction = NEGATIVE_DIRECTION if direction == POSITIVE_DIRECTION else POSITIVE_DIRECTION
+    direction = (
+        CONTROLLER_POSITIVE_DIRECTION
+        if pulse > 0
+        else CONTROLLER_NEGATIVE_DIRECTION
+    )
 
     cmd = (
         f"AXI{axis}:F{SPEED_TABLE_INDEX} {fast_speed}:"
@@ -191,13 +213,14 @@ def move(
 ) -> Point:
     """Move by signed pulse distances and return current axis positions.
 
-    Negative input pulses are converted to a controller direction. The SSD220
-    command still receives a positive pulse count. Each axis can receive either
-    one pulse value or a list of pulse values to execute in order.
+    Public pulse signs use physical directions: positive means right for X/V/W
+    and up for Y/Z/U. SSD220 translates that logical sign into controller
+    coordinates before sending a positive pulse count plus CW/CCW direction.
+    Each axis can receive one pulse value or a list to execute in order.
 
     Args:
         inst: Open PyVISA instrument resource for the SSD220 controller.
-        pulse: Signed relative pulse movement. Use a dictionary such as
+        pulse: Signed logical relative movement. Use a dictionary such as
             `{"X": "1000", "Z": ["10000", "-10000"]}`.
         fast_speed: Optional fast speeds as an axis dictionary. If omitted,
             uses `DEFAULT_FAST_SPEED`.
@@ -219,10 +242,11 @@ def move(
     for axis, axis_pulses in pulse.items():
         axis_pulses = [axis_pulses] if isinstance(axis_pulses, str) else axis_pulses
         for axis_pulse in axis_pulses:
+            controller_pulse = convert_axis_pulse(axis, axis_pulse)
             if _move_axis(
                 inst,
                 axis,
-                axis_pulse,
+                controller_pulse,
                 fast_speed[axis],
                 low_speed[axis],
             ):
@@ -253,7 +277,7 @@ def move_with_control(
 
     Args:
         inst: Open PyVISA instrument resource for the SSD220 controller.
-        pulse: Signed relative pulse movement by axis.
+        pulse: Signed logical relative movement by axis.
         fast_speed: Optional fast speeds as an axis dictionary.
         low_speed: Optional low/start speeds as an axis dictionary.
         stop_requested: Optional callback returning ``True`` when motion should
@@ -306,8 +330,9 @@ def _move_axis_with_control(
     reaction_time: float,
     poll_callback: Optional[Callable[[], None]],
 ) -> bool:
-    """Move one axis to a computed target while honoring stop/pause controls."""
-    target_position = int(_get_axis_pos(inst, axis).strip()) + int(pulse_value)
+    """Move one axis to its converted controller target with pause/stop."""
+    controller_pulse = convert_axis_pulse(axis, pulse_value)
+    target_position = int(_get_axis_pos(inst, axis).strip()) + int(controller_pulse)
 
     while True:
         current_position = int(_get_axis_pos(inst, axis).strip())
@@ -412,7 +437,10 @@ def move_to_origin(
     """
     axes = list(AXES) if axes is None else axes
     current = get_pos(inst, axes)
-    pulse_to_origin = {axis: str(-int(current[axis])) for axis in axes}
+    pulse_to_origin = {
+        axis: convert_axis_pulse(axis, -int(current[axis]))
+        for axis in axes
+    }
     return move(
         inst,
         pulse_to_origin,
