@@ -27,6 +27,8 @@ LUCAM_CHILD_WINDOW_STYLE = 0x56000000  # WS_CHILD | WS_VISIBLE | clipping styles
 
 
 class LucamStreamApp:
+    # ==================== Initialization ====================
+
     def __init__(
         self,
         master,
@@ -51,9 +53,9 @@ class LucamStreamApp:
         self.max_stream_time = 36001  # 10 hours of run-time and then it closes camera
         
         # Stream display settings
-        self.current_scale = 100  # Default scale 100%
         self.frame_width = 0
         self.frame_height = 0
+        self.frame_aspect = 1.0
         self.window_width = 0
         self.window_height = 0
         
@@ -88,9 +90,11 @@ class LucamStreamApp:
         
         # Bind window resize event
         self.master.bind("<Configure>", self.on_window_resize)
-        
+
+    # ==================== UI Setup ====================
+
     def setup_ui(self):
-        """================ Exposure Control Set ================"""
+        # Exposure controls
         exposure_frame = tk.Frame(self.master)
         exposure_frame.pack(pady=5)
         
@@ -98,20 +102,20 @@ class LucamStreamApp:
         exposure_entry = tk.Entry(exposure_frame, textvariable=self.exposure_var, width=10)
         exposure_entry.pack(side=tk.LEFT, padx=5)
         tk.Button(exposure_frame, text="Set Exposure", command=self.set_exposure).pack(side=tk.LEFT)
-        
-        """================ Stream Resize Control Set ================"""
+
+        # Stream resize controls
         resize_frame = tk.Frame(self.master)
         resize_frame.pack(pady=5)
         
         tk.Label(resize_frame, text="Stream Size:").pack(side=tk.LEFT)
         
         # Size buttons
-        tk.Button(resize_frame, text="50%", command=lambda: self.set_stream_scale(50)).pack(side=tk.LEFT, padx=5)
-        tk.Button(resize_frame, text="75%", command=lambda: self.set_stream_scale(75)).pack(side=tk.LEFT, padx=5)
-        tk.Button(resize_frame, text="100%", command=lambda: self.set_stream_scale(100)).pack(side=tk.LEFT, padx=5)
-        tk.Button(resize_frame, text="Fit to Window", command=self.fit_to_window).pack(side=tk.LEFT, padx=5)
-    
-        """================ Save Directory Set ================"""
+        tk.Button(resize_frame, text="25%", command=lambda: self.resize_preview_window(int(self.frame_width * 0.25))).pack(side=tk.LEFT, padx=5)
+        tk.Button(resize_frame, text="50%", command=lambda: self.resize_preview_window(int(self.frame_width * 0.5))).pack(side=tk.LEFT, padx=5)
+        tk.Button(resize_frame, text="75%", command=lambda: self.resize_preview_window(int(self.frame_width * 0.75))).pack(side=tk.LEFT, padx=5)
+        tk.Button(resize_frame, text="100%", command=lambda: self.resize_preview_window(self.frame_width)).pack(side=tk.LEFT, padx=5)
+
+        # Save directory controls
         dir_frame = tk.Frame(self.master)
         dir_frame.pack(pady=5)
         
@@ -119,7 +123,7 @@ class LucamStreamApp:
         tk.Entry(dir_frame, textvariable=self.dir_path, width=40).pack(side=tk.LEFT, padx=5)
         tk.Button(dir_frame, text="Browse", command=self.select_directory).pack(side=tk.LEFT)
 
-        """================ Image Info Set ================"""
+        # Image info fields
         info_frame = tk.Frame(self.master)
         info_frame.pack(pady=5)
         
@@ -128,8 +132,8 @@ class LucamStreamApp:
             row.pack(pady=2)
             tk.Label(row, text=f"{label}:").pack(side=tk.LEFT)
             tk.Entry(row, textvariable=self.info_vars[label], width=20).pack(side=tk.LEFT)
-            
-        """================ Basic Motor Control Set ================"""
+
+        # Basic motor controls
         motor_frame = tk.Frame(self.master)
         motor_frame.pack(pady=10)
         
@@ -142,8 +146,8 @@ class LucamStreamApp:
         
         # Focus score display
         tk.Label(motor_frame, textvariable=self.focus_score_var).pack(side=tk.LEFT, padx=5)
-    
-        """================ Streaming Control Set ================"""
+
+        # Streaming controls
         streaming_frame = tk.Frame(self.master)
         streaming_frame.pack(pady=10)
         
@@ -152,8 +156,8 @@ class LucamStreamApp:
         
         self.stop_button = tk.Button(streaming_frame, text="Close Camera View", command=self.stop_streaming, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
-        
-        """================ Snapshot Control Set ================"""
+
+        # Snapshot controls
         snapshot_frame = tk.Frame(self.master)
         snapshot_frame.pack(pady=10)
         
@@ -167,12 +171,12 @@ class LucamStreamApp:
             state=tk.DISABLED,
         )
         self.snap_el_button.pack(side=tk.LEFT, padx=5)
-        
-        """================ Status Display Set ================"""
+
+        # Status display
         self.status_label = tk.Label(self.master, text="Camera not initialized", fg="red")
         self.status_label.pack(pady=10)
-        
-        """================ Fine Motor Control Set ================"""
+
+        # Fine motor controls
         motor_frame = tk.Frame(self.master)
         motor_frame.pack(pady=10)
         
@@ -202,78 +206,7 @@ class LucamStreamApp:
         # Focus score display
         tk.Label(motor_frame, textvariable=self.focus_score_var).pack(pady=5)
 
-    def on_window_resize(self, event):
-        """Handle window resize event - adjust video stream if "Fit to Window" was selected"""
-        # Only update if the window size has actually changed
-        if (self.window_width != event.width or self.window_height != event.height) and self.lucam and self.streaming:
-            self.window_width = event.width
-            self.window_height = event.height
-            # If we're in "fit to window" mode, adjust the stream
-            if self.current_scale == 0:  # 0 indicates "fit to window"
-                self.fit_to_window()
-    
-    def set_stream_scale(self, scale_percent):
-        """Set the stream display size to a percentage of the original size"""
-        if not self.lucam or not self.streaming:
-            return
-                
-        self.current_scale = scale_percent
-        
-        try:
-            # Get the current frame format to know the actual frame size
-            frameformat, _ = self.lucam.GetFormat()
-            
-            # Calculate the width and height based on the scale
-            width = int(frameformat.width * scale_percent / 100)
-            height = int(frameformat.height * scale_percent / 100)
-            self._resize_preview_window(width, height)
-            
-            self.update_status(f"Stream resized to {scale_percent}%", "green")
-            
-        except LucamError as e:
-            self.update_status(f"Failed to resize stream: {e}", "red")
-    
-    def fit_to_window(self):
-        """Adjust the stream to fit the current window size"""
-        if not self.lucam or not self.streaming:
-            return
-            
-        self.current_scale = 0  # 0 indicates "fit to window" mode
-        
-        try:
-            # Get window dimensions (subtract some padding for UI elements)
-            window_width = self.master.winfo_width() - 50
-            window_height = self.master.winfo_height() - 350  # Adjust as needed based on UI layout
-            
-            # Ensure minimum dimensions
-            window_width = max(window_width, 320)
-            window_height = max(window_height, 240)
-            
-            # Get the current frame format
-            frameformat, _ = self.lucam.GetFormat()
-            original_width = frameformat.width
-            original_height = frameformat.height
-            
-            # Calculate scaling to maintain aspect ratio
-            width_ratio = window_width / original_width
-            height_ratio = window_height / original_height
-            
-            # Use the smaller ratio to ensure it fits within the window
-            scale_ratio = min(width_ratio, height_ratio)
-            
-            display_width = int(original_width * scale_ratio)
-            display_height = int(original_height * scale_ratio)
-            self._resize_preview_window(display_width, display_height)
-            
-            # Calculate and display the actual scale percentage
-            actual_scale = int(scale_ratio * 100)
-            self.update_status(f"Stream fitted to window ({actual_scale}% of original)", "green")
-            
-        except LucamError as e:
-            self.update_status(f"Failed to fit stream to window: {e}", "red")
-            
-        
-
+    # ==================== Motor Movement ====================
 
     def move_up(self):
         if not self.motor:
@@ -338,6 +271,8 @@ class LucamStreamApp:
             resume_allowed=self.resume_allowed,
             poll_callback=self.master.update,
         )
+
+    # ==================== Autofocus ====================
 
     def find_focus(self):
         if not self.motor or not self.lucam:
@@ -598,6 +533,8 @@ class LucamStreamApp:
             self.update_status("!!! DONE !!!", "green")
             
             
+    # ==================== Image Metadata ====================
+
     def select_directory(self):
         dir_path = filedialog.askdirectory()
         if dir_path:
@@ -609,6 +546,15 @@ class LucamStreamApp:
         self.info_vars["WAFER"].set(wafer)
         self.info_vars["ID"].set(device_id)
     
+    # ==================== Camera Setup And Preview ====================
+
+    def on_window_resize(self, event):
+        """Track main window size changes."""
+        # Only update if the window size has actually changed
+        if (self.window_width != event.width or self.window_height != event.height) and self.lucam and self.streaming:
+            self.window_width = event.width
+            self.window_height = event.height
+
     def init_camera(self):
         try:
             #check how many cameras are connected, if it cannot find any then it would indicate that
@@ -619,6 +565,11 @@ class LucamStreamApp:
             
             # Open the first camera
             self.lucam = Lucam(1)
+            frameformat, _ = self.lucam.GetFormat()
+            self.frame_width = int(frameformat.width)
+            self.frame_height = int(frameformat.height)
+            if self.frame_height > 0:
+                self.frame_aspect = self.frame_width / self.frame_height
             
             # Enable snapshot buttons
             self.snapshot_button.config(state=tk.NORMAL)
@@ -628,53 +579,30 @@ class LucamStreamApp:
         except Exception as e:
             self.update_status(f"Camera initialization error: {e}", "red")
 
-    def _get_preview_size(self):
-        """Return preview size from the current stream scale setting."""
-        frameformat, _ = self.lucam.GetFormat()
-        if self.current_scale == 0:
-            window_width = max(self.master.winfo_width() - 50, 320)
-            window_height = max(self.master.winfo_height() - 350, 240)
-            scale_ratio = min(
-                window_width / frameformat.width,
-                window_height / frameformat.height,
-            )
-        else:
-            scale_ratio = self.current_scale / 100
-        return int(frameformat.width * scale_ratio), int(frameformat.height * scale_ratio)
+    def resize_preview_window(self, width):
+        """Resize the preview by width while preserving camera frame aspect."""
+        if not self.lucam or not self.streaming or self.preview_window is None or width <= 0:
+            return
 
-    def _resize_preview_window(self, width, height):
-        """Resize the Tk host frame and the embedded Lucam display."""
+        height = int(width / self.frame_aspect)
         if self.preview_window is not None:
             self.preview_window.geometry(f"{width}x{height}")
         if self.preview_frame is not None:
             self.preview_frame.config(width=width, height=height)
         if self.display_window_created:
-            self.lucam.AdjustDisplayWindow(
-                b'Lucam Video Stream',
-                0,
-                0,
-                width,
-                height,
-            )
-
-    def _on_preview_frame_resize(self, event):
-        """Keep the embedded Lucam display matched to the Tk frame size."""
-        if (
-            self.display_window_created
-            and self.lucam is not None
-            and event.width > 1
-            and event.height > 1
-        ):
             try:
                 self.lucam.AdjustDisplayWindow(
                     b'Lucam Video Stream',
                     0,
                     0,
-                    event.width,
-                    event.height,
+                    width,
+                    height,
                 )
             except LucamError as exc:
                 self.update_status(f"Failed to resize stream: {exc}", "red")
+                return
+
+        self.update_status(f"Stream resized to {width}x{height}", "green")
     
     def start_streaming(self):
         if not self.lucam:
@@ -686,10 +614,12 @@ class LucamStreamApp:
                 self.preview_window.lift()
                 return
 
-            width, height = self._get_preview_size()
+            width = self.frame_width
+            height = int(width / self.frame_aspect)
             self.preview_window = tk.Toplevel(self.master)
             self.preview_window.title("Camera Preview")
             self.preview_window.geometry(f"{width}x{height}")
+            self.preview_window.resizable(False, False)
             self.preview_window.protocol("WM_DELETE_WINDOW", self.stop_streaming)
             self.preview_frame = tk.Frame(
                 self.preview_window,
@@ -699,7 +629,6 @@ class LucamStreamApp:
             )
             self.preview_frame.pack(fill=tk.BOTH, expand=True)
             self.preview_frame.pack_propagate(False)
-            self.preview_frame.bind("<Configure>", self._on_preview_frame_resize)
             self.preview_frame.update_idletasks()
 
             if not self.display_window_created:
@@ -778,6 +707,8 @@ class LucamStreamApp:
         else:
             self.update_status("Camera view closed", "red")
     
+    # ==================== Visible Snapshot ====================
+
     def take_snapshot(self):
         if not self.lucam:
             messagebox.showerror("Error", "Camera not initialized")
@@ -889,6 +820,8 @@ class LucamStreamApp:
         # Schedule next check in X number of seconds
         self.master.after((wait_duration * 1000), self.monitor_stream)
             
+    # ==================== Status And Cleanup ====================
+
     def update_status(self, message, color="black"):
         self.status_label.config(text=message, fg=color)
     
@@ -922,6 +855,8 @@ class LucamStreamApp:
         self.master.destroy()
         
     
+    # ==================== Camera Settings ====================
+
     def set_exposure(self):
        if not self.lucam:
            return
@@ -947,6 +882,8 @@ class LucamStreamApp:
        except LucamError as e:
            self.update_status(f"Failed to set exposure: {e}", "red")
     
+    # ==================== Image Processing Helpers ====================
+
     def calculate_focus(self, image):
         # Resize to 100x100
         # resized = imutils.resize(image[100:1400,500:1400], width=150)
@@ -1011,6 +948,8 @@ class LucamStreamApp:
                 success = False
                 self.update_status(f"Failed to turn off {name} Keithley: {exc}", "red")
         return success
+
+    # ==================== EL Snapshot Workflow ====================
 
     def take_el_snapshot(self, show_comparison: bool = False) -> bool:
         """Capture visible and EL images with safe source and motor cleanup."""
@@ -1176,6 +1115,8 @@ class LucamStreamApp:
             self._show_el_comparison(visible_image, el_image)
         return capture_ok
     
+
+# ==================== Standalone Entry Point ====================
 
 def main():
     motor = None
