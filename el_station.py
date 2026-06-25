@@ -705,12 +705,16 @@ class LucamStreamApp:
         self.focus_overlay_canvas.config(width=width, height=height)
         self.focus_overlay_canvas.delete("all")
 
-        rect_width = 100
-        rect_height = 100
-        x1 = (width - rect_width) // 2
-        y1 = (height - rect_height) // 2
-        x2 = x1 + rect_width
-        y2 = y1 + rect_height
+        rect_size = 50
+        center_x = width // 2
+        center_y = height // 2
+        rect_offsets = (
+            (0, 0),
+            (0, -100),
+            (-100, 0),
+            (100, 0),
+            (0, 100),
+        )
         if self.focus_overlay_toolbar is not None:
             self.focus_overlay_toolbar.config(width=width)
             self.focus_overlay_toolbar_window = self.focus_overlay_canvas.create_window(
@@ -720,14 +724,21 @@ class LucamStreamApp:
                 window=self.focus_overlay_toolbar,
                 width=width,
             )
-        self.focus_overlay_canvas.create_rectangle(
-            x1,
-            y1,
-            x2,
-            y2,
-            outline="black",
-            width=3,
-        )
+        for offset_x, offset_y in rect_offsets:
+            rect_center_x = center_x + offset_x
+            rect_center_y = center_y + offset_y
+            x1 = rect_center_x - rect_size // 2
+            y1 = rect_center_y - rect_size // 2
+            x2 = x1 + rect_size
+            y2 = y1 + rect_size
+            self.focus_overlay_canvas.create_rectangle(
+                x1,
+                y1,
+                x2,
+                y2,
+                outline="black",
+                width=3,
+            )
 
     def _resize_native_preview_window(self, width, height):
         """Resize the native Lucam display window hosted by the Tk frame."""
