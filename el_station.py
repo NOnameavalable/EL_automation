@@ -654,13 +654,6 @@ class LucamStreamApp:
                     parent=self.lucam_frame.winfo_id(),
                 )
                 self.display_window_created = True
-                self.lucam.AdjustDisplayWindow(
-                    b'Lucam Video Stream',
-                    0,
-                    0,
-                    width,
-                    height,
-                )
 
             # Start video streaming in the display window.
             self.lucam.StreamVideoControl('start_display')
@@ -670,6 +663,7 @@ class LucamStreamApp:
             self.stream_duration = 0
             self.start_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
+            self.resize_preview_window(width)
             
             self.update_status("Streaming started", "green")
             
