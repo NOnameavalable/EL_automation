@@ -995,7 +995,7 @@ class LucamStreamApp:
 
     def take_el_snapshot(self, show_comparison: bool = False) -> bool:
         """Capture visible and EL images with safe source and motor cleanup."""
-        el_pulse = 28000
+        el_pulse = 3700
         if not self.lucam or not self.motor:
             messagebox.showerror("Error", "Camera or motor not initialized")
             return False
