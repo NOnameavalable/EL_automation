@@ -595,18 +595,17 @@ class LucamStreamApp:
         height = int(width / self.frame_aspect)
         self.preview_window.geometry(f"{width}x{height}")
         self.lucam_frame.place(x=0, y=0, width=width, height=height)
-        if self.display_window_created:
-            try:
-                self.lucam.AdjustDisplayWindow(
-                    b'Lucam Video Stream',
-                    0,
-                    0,
-                    width,
-                    height,
-                )
-            except LucamError as exc:
-                self.update_status(f"Failed to resize stream: {exc}", "red")
-                return
+        try:
+            self.lucam.AdjustDisplayWindow(
+                b'Lucam Video Stream',
+                0,
+                0,
+                width,
+                height,
+            )
+        except LucamError as exc:
+            self.update_status(f"Failed to resize stream: {exc}", "red")
+            return
 
         self.update_status(f"Stream resized to {width}x{height}", "green")
 
@@ -655,6 +654,13 @@ class LucamStreamApp:
                     parent=self.lucam_frame.winfo_id(),
                 )
                 self.display_window_created = True
+                self.lucam.AdjustDisplayWindow(
+                    b'Lucam Video Stream',
+                    0,
+                    0,
+                    width,
+                    height,
+                )
 
             # Start video streaming in the display window.
             self.lucam.StreamVideoControl('start_display')
