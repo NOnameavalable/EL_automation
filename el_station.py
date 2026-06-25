@@ -580,8 +580,8 @@ class LucamStreamApp:
         except Exception as e:
             self.update_status(f"Camera initialization error: {e}", "red")
 
-    def resize_preview_window(self, width, container_height=None):
-        """Resize the preview while preserving camera frame aspect."""
+    def resize_preview_window(self, width):
+        """Resize the preview from width while preserving camera frame aspect."""
         if (
             not self.lucam
             or not self.streaming
@@ -591,24 +591,10 @@ class LucamStreamApp:
         ):
             return
 
-        button_resize = container_height is None
-        if button_resize:
-            container_height = int(width / self.frame_aspect)
-            self.preview_window.geometry(f"{width}x{container_height}")
-
-        if container_height <= 1:
-            return
-
-        container_width = int(width)
-        width = container_width
+        width = int(width)
         height = int(width / self.frame_aspect)
-        if height > container_height:
-            height = int(container_height)
-            width = int(height * self.frame_aspect)
-
-        x = max((container_width - width) // 2, 0)
-        y = max((container_height - height) // 2, 0)
-        self.lucam_frame.place(x=x, y=y, width=width, height=height)
+        self.preview_window.geometry(f"{width}x{height}")
+        self.lucam_frame.place(x=0, y=0, width=width, height=height)
         if self.display_window_created:
             try:
                 self.lucam.AdjustDisplayWindow(
@@ -622,12 +608,11 @@ class LucamStreamApp:
                 self.update_status(f"Failed to resize stream: {exc}", "red")
                 return
 
-        if button_resize:
-            self.update_status(f"Stream resized to {width}x{height}", "green")
+        self.update_status(f"Stream resized to {width}x{height}", "green")
 
     def _on_preview_frame_resize(self, event):
-        """Keep the Lucam video aspect-correct while the window is dragged."""
-        self.resize_preview_window(event.width, event.height)
+        """Force dragged preview width to determine the matching height."""
+        self.resize_preview_window(event.width)
     
     def start_streaming(self):
         if not self.lucam:
