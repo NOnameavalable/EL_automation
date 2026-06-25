@@ -8,6 +8,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import ctypes
+from ctypes import wintypes
 import cv2
 import imutils
 import time
@@ -24,6 +25,12 @@ from SSD220 import (
 
 EL_CAMERA_AXIS = "W"
 LUCAM_CHILD_WINDOW_STYLE = 0x56000000  # WS_CHILD | WS_VISIBLE | clipping styles
+
+WNDENUMPROC = ctypes.WINFUNCTYPE(
+    wintypes.BOOL,
+    wintypes.HWND,
+    wintypes.LPARAM,
+)
 
 
 class LucamStreamApp:
@@ -598,6 +605,7 @@ class LucamStreamApp:
                     width,
                     height,
                 )
+                self._resize_native_preview_window(width, height)
         except LucamError as exc:
             self.update_status(f"Failed to resize stream: {exc}", "red")
             return
@@ -609,6 +617,20 @@ class LucamStreamApp:
     def _on_preview_frame_resize(self, event):
         """Force dragged preview width to determine the matching height."""
         self.resize_preview_window(event.width)
+
+    def _resize_native_preview_window(self, width, height):
+        """Resize the native Lucam display window hosted by the Tk frame."""
+        if self.lucam_frame is None:
+            return
+
+        parent_hwnd = self.lucam_frame.winfo_id()
+
+        def resize_child(hwnd, _lparam):
+            ctypes.windll.user32.MoveWindow(hwnd, 0, 0, width, height, True)
+            return True
+
+        enum_proc = WNDENUMPROC(resize_child)
+        ctypes.windll.user32.EnumChildWindows(parent_hwnd, enum_proc, 0)
     
     def start_streaming(self):
         if not self.lucam:
@@ -661,6 +683,7 @@ class LucamStreamApp:
             self.start_button.config(state=tk.DISABLED)
             self.stop_button.config(state=tk.NORMAL)
             self.resize_preview_window(width)
+            self._resize_native_preview_window(width, height)
             
             self.update_status("Streaming started", "green")
             
