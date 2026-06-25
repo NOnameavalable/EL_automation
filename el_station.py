@@ -56,6 +56,8 @@ class LucamStreamApp:
         self.preview_window = None
         self.preview_frame = None
         self.lucam_frame = None
+        self.focus_overlay_window = None
+        self.focus_overlay_canvas = None
         self.preview_resize_in_progress = False
         self.capture_in_progress = False
         self.stream_duration = 0
@@ -196,7 +198,7 @@ class LucamStreamApp:
         tk.Button(move_buttons_frame, text="Move Down Fine", command=self.move_down_fine).grid(row=1, column=1, padx=5, pady=5)
         tk.Button(move_buttons_frame, text="Move Down", command=self.move_down).grid(row=1, column=0, padx=5, pady=5)
         
-        tk.Button(motor_frame, text="Find Focus", command=self.find_focus_en).pack(pady=5)
+        tk.Button(motor_frame, text="Find Focus", command=self.open_focus_overlay).pack(pady=5)
         
         # Focus score display
         tk.Label(motor_frame, textvariable=self.focus_score_var).pack(pady=5)
@@ -606,6 +608,7 @@ class LucamStreamApp:
                     height,
                 )
                 self._resize_native_preview_window(width, height)
+                self._position_focus_overlay()
         except LucamError as exc:
             self.update_status(f"Failed to resize stream: {exc}", "red")
             return
@@ -617,6 +620,80 @@ class LucamStreamApp:
     def _on_preview_frame_resize(self, event):
         """Force dragged preview width to determine the matching height."""
         self.resize_preview_window(event.width)
+
+    def open_focus_overlay(self):
+        """Open a transparent overlay aligned to the visible Lucam image."""
+        if not self.streaming or self.lucam_frame is None:
+            messagebox.showerror("Error", "Open Camera View before selecting focus")
+            return
+
+        if self.focus_overlay_window is None:
+            overlay = tk.Toplevel(self.preview_window)
+            overlay.overrideredirect(True)
+            overlay.transient(self.preview_window)
+            overlay.attributes("-topmost", True)
+            try:
+                overlay.attributes("-transparentcolor", "magenta")
+            except tk.TclError:
+                pass
+
+            canvas = tk.Canvas(
+                overlay,
+                bg="magenta",
+                highlightthickness=0,
+                bd=0,
+            )
+            canvas.pack(fill=tk.BOTH, expand=True)
+            overlay.bind("<Escape>", lambda _event: self.close_focus_overlay())
+            overlay.protocol("WM_DELETE_WINDOW", self.close_focus_overlay)
+            self.focus_overlay_window = overlay
+            self.focus_overlay_canvas = canvas
+
+        self._position_focus_overlay()
+        self.focus_overlay_window.lift()
+
+    def close_focus_overlay(self):
+        if self.focus_overlay_window is not None:
+            try:
+                self.focus_overlay_window.destroy()
+            except Exception:
+                pass
+        self.focus_overlay_window = None
+        self.focus_overlay_canvas = None
+
+    def _position_focus_overlay(self):
+        if self.focus_overlay_window is None or self.focus_overlay_canvas is None:
+            return
+        if self.lucam_frame is None:
+            self.close_focus_overlay()
+            return
+
+        self.lucam_frame.update_idletasks()
+        width = self.lucam_frame.winfo_width()
+        height = self.lucam_frame.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+
+        x = self.lucam_frame.winfo_rootx()
+        y = self.lucam_frame.winfo_rooty()
+        self.focus_overlay_window.geometry(f"{width}x{height}+{x}+{y}")
+        self.focus_overlay_canvas.config(width=width, height=height)
+        self.focus_overlay_canvas.delete("all")
+
+        rect_width = int(width * 0.35)
+        rect_height = int(height * 0.25)
+        x1 = (width - rect_width) // 2
+        y1 = (height - rect_height) // 2
+        x2 = x1 + rect_width
+        y2 = y1 + rect_height
+        self.focus_overlay_canvas.create_rectangle(
+            x1,
+            y1,
+            x2,
+            y2,
+            outline="black",
+            width=3,
+        )
 
     def _resize_native_preview_window(self, width, height):
         """Resize the native Lucam display window hosted by the Tk frame."""
@@ -647,6 +724,7 @@ class LucamStreamApp:
             self.preview_window = tk.Toplevel(self.master)
             self.preview_window.title("Camera Preview")
             self.preview_window.geometry(f"{width}x{height}")
+            self.preview_window.bind("<Configure>", lambda _event: self._position_focus_overlay())
             self.preview_window.protocol("WM_DELETE_WINDOW", self.stop_streaming)
             self.preview_frame = tk.Frame(
                 self.preview_window,
@@ -725,6 +803,7 @@ class LucamStreamApp:
             errors.append(str(exc))
 
         try:
+            self.close_focus_overlay()
             if self.preview_window is not None:
                 self.preview_window.destroy()
         except Exception as exc:
