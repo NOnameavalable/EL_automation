@@ -49,6 +49,7 @@ class LucamStreamApp:
         self.preview_window = None
         self.preview_frame = None
         self.lucam_frame = None
+        self.preview_resize_in_progress = False
         self.capture_in_progress = False
         self.stream_duration = 0
         self.max_stream_time = 36001  # 10 hours of run-time and then it closes camera
@@ -133,20 +134,6 @@ class LucamStreamApp:
             row.pack(pady=2)
             tk.Label(row, text=f"{label}:").pack(side=tk.LEFT)
             tk.Entry(row, textvariable=self.info_vars[label], width=20).pack(side=tk.LEFT)
-
-        # Basic motor controls
-        motor_frame = tk.Frame(self.master)
-        motor_frame.pack(pady=10)
-        
-        tk.Label(motor_frame, text="Steps:").pack(side=tk.LEFT)
-        tk.Entry(motor_frame, textvariable=self.steps_var, width=10).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(motor_frame, text="Move Up", command=self.move_up).pack(side=tk.LEFT, padx=5)
-        tk.Button(motor_frame, text="Move Down", command=self.move_down).pack(side=tk.LEFT, padx=5)
-        tk.Button(motor_frame, text="Find Focus", command=self.find_focus).pack(side=tk.LEFT, padx=5)
-        
-        # Focus score display
-        tk.Label(motor_frame, textvariable=self.focus_score_var).pack(side=tk.LEFT, padx=5)
 
         # Streaming controls
         streaming_frame = tk.Frame(self.master)
@@ -586,26 +573,36 @@ class LucamStreamApp:
             not self.lucam
             or not self.streaming
             or self.preview_window is None
+            or self.preview_frame is None
             or self.lucam_frame is None
             or width <= 1
         ):
             return
+        if self.preview_resize_in_progress:
+            return
 
-        width = int(width)
-        height = int(width / self.frame_aspect)
-        self.preview_window.geometry(f"{width}x{height}")
-        self.lucam_frame.place(x=0, y=0, width=width, height=height)
         try:
-            self.lucam.AdjustDisplayWindow(
-                b'Lucam Video Stream',
-                0,
-                0,
-                width,
-                height,
-            )
+            self.preview_resize_in_progress = True
+            width = int(width)
+            height = int(width / self.frame_aspect)
+            self.preview_window.geometry(f"{width}x{height}")
+            self.preview_frame.config(width=width, height=height)
+            self.lucam_frame.place(x=0, y=0, width=width, height=height)
+            self.preview_frame.update_idletasks()
+            self.lucam_frame.update_idletasks()
+            if self.display_window_created:
+                self.lucam.AdjustDisplayWindow(
+                    b'Lucam Video Stream',
+                    0,
+                    0,
+                    width,
+                    height,
+                )
         except LucamError as exc:
             self.update_status(f"Failed to resize stream: {exc}", "red")
             return
+        finally:
+            self.preview_resize_in_progress = False
 
         self.update_status(f"Stream resized to {width}x{height}", "green")
 
