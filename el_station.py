@@ -58,6 +58,8 @@ class LucamStreamApp:
         self.lucam_frame = None
         self.focus_overlay_window = None
         self.focus_overlay_canvas = None
+        self.focus_overlay_toolbar = None
+        self.focus_overlay_toolbar_window = None
         self.preview_resize_in_progress = False
         self.capture_in_progress = False
         self.stream_duration = 0
@@ -627,8 +629,15 @@ class LucamStreamApp:
             messagebox.showerror("Error", "Open Camera View before selecting focus")
             return
 
+        geometry = self._current_lucam_frame_geometry()
+        if geometry is None:
+            self.master.after(50, self.open_focus_overlay)
+            return
+        width, height, x, y = geometry
+
         if self.focus_overlay_window is None:
             overlay = tk.Toplevel(self.preview_window)
+            overlay.withdraw()
             overlay.overrideredirect(True)
             overlay.transient(self.preview_window)
             overlay.attributes("-topmost", True)
@@ -644,13 +653,32 @@ class LucamStreamApp:
                 bd=0,
             )
             canvas.pack(fill=tk.BOTH, expand=True)
+            toolbar = tk.Frame(canvas, bg="SystemButtonFace")
+            toolbar_window = canvas.create_window(0, 0, anchor=tk.NW, window=toolbar)
+            tk.Button(toolbar, text="Close", command=self.close_focus_overlay).pack(side=tk.LEFT)
             overlay.bind("<Escape>", lambda _event: self.close_focus_overlay())
             overlay.protocol("WM_DELETE_WINDOW", self.close_focus_overlay)
             self.focus_overlay_window = overlay
             self.focus_overlay_canvas = canvas
+            self.focus_overlay_toolbar = toolbar
+            self.focus_overlay_toolbar_window = toolbar_window
 
-        self._position_focus_overlay()
+        self._position_focus_overlay(width, height, x, y)
+        self.focus_overlay_window.deiconify()
         self.focus_overlay_window.lift()
+
+    def _current_lucam_frame_geometry(self):
+        if self.lucam_frame is None:
+            return None
+
+        self.lucam_frame.update_idletasks()
+        width = self.lucam_frame.winfo_width()
+        height = self.lucam_frame.winfo_height()
+        x = self.lucam_frame.winfo_rootx()
+        y = self.lucam_frame.winfo_rooty()
+        if width <= 1 or height <= 1 or x <= 0 or y <= 0:
+            return None
+        return width, height, x, y
 
     def close_focus_overlay(self):
         if self.focus_overlay_window is not None:
@@ -660,32 +688,38 @@ class LucamStreamApp:
                 pass
         self.focus_overlay_window = None
         self.focus_overlay_canvas = None
+        self.focus_overlay_toolbar = None
+        self.focus_overlay_toolbar_window = None
 
-    def _position_focus_overlay(self):
+    def _position_focus_overlay(self, width=None, height=None, x=None, y=None):
         if self.focus_overlay_window is None or self.focus_overlay_canvas is None:
             return
-        if self.lucam_frame is None:
-            self.close_focus_overlay()
-            return
+        if width is None or height is None or x is None or y is None:
+            geometry = self._current_lucam_frame_geometry()
+            if geometry is None:
+                self.close_focus_overlay()
+                return
+            width, height, x, y = geometry
 
-        self.lucam_frame.update_idletasks()
-        width = self.lucam_frame.winfo_width()
-        height = self.lucam_frame.winfo_height()
-        if width <= 1 or height <= 1:
-            return
-
-        x = self.lucam_frame.winfo_rootx()
-        y = self.lucam_frame.winfo_rooty()
         self.focus_overlay_window.geometry(f"{width}x{height}+{x}+{y}")
         self.focus_overlay_canvas.config(width=width, height=height)
         self.focus_overlay_canvas.delete("all")
 
-        rect_width = int(width * 0.35)
-        rect_height = int(height * 0.25)
+        rect_width = 100
+        rect_height = 100
         x1 = (width - rect_width) // 2
         y1 = (height - rect_height) // 2
         x2 = x1 + rect_width
         y2 = y1 + rect_height
+        if self.focus_overlay_toolbar is not None:
+            self.focus_overlay_toolbar.config(width=width)
+            self.focus_overlay_toolbar_window = self.focus_overlay_canvas.create_window(
+                0,
+                0,
+                anchor=tk.NW,
+                window=self.focus_overlay_toolbar,
+                width=width,
+            )
         self.focus_overlay_canvas.create_rectangle(
             x1,
             y1,
@@ -724,6 +758,7 @@ class LucamStreamApp:
             self.preview_window = tk.Toplevel(self.master)
             self.preview_window.title("Camera Preview")
             self.preview_window.geometry(f"{width}x{height}")
+            self.preview_window.resizable(False, False)
             self.preview_window.bind("<Configure>", lambda _event: self._position_focus_overlay())
             self.preview_window.protocol("WM_DELETE_WINDOW", self.stop_streaming)
             self.preview_frame = tk.Frame(
