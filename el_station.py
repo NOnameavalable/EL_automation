@@ -23,6 +23,7 @@ from SSD220 import (
 )
 
 EL_CAMERA_AXIS = "W"
+LUCAM_CHILD_WINDOW_STYLE = 0x56000000  # WS_CHILD | WS_VISIBLE | clipping styles
 
 
 class LucamStreamApp:
@@ -43,6 +44,8 @@ class LucamStreamApp:
         self.lucam = None
         self.streaming = False
         self.display_window_created = False
+        self.preview_window = None
+        self.preview_frame = None
         self.capture_in_progress = False
         self.stream_duration = 0
         self.max_stream_time = 36001  # 10 hours of run-time and then it closes camera
@@ -223,15 +226,7 @@ class LucamStreamApp:
             # Calculate the width and height based on the scale
             width = int(frameformat.width * scale_percent / 100)
             height = int(frameformat.height * scale_percent / 100)
-            
-            # Stop streaming first
-            # self.lucam.StreamVideoControl('stop_streaming')
-            
-            # Adjust the display window
-            self.lucam.AdjustDisplayWindow(b'Lucam Video Stream', 0, 0, width, height)
-            
-            # Restart streaming
-            # self.lucam.StreamVideoControl('start_display')
+            self._resize_preview_window(width, height)
             
             self.update_status(f"Stream resized to {scale_percent}%", "green")
             
@@ -268,9 +263,7 @@ class LucamStreamApp:
             
             display_width = int(original_width * scale_ratio)
             display_height = int(original_height * scale_ratio)
-            
-            # Adjust the display window
-            self.lucam.AdjustDisplayWindow(b'Lucam Video Stream', 0, 0, display_width, display_height)
+            self._resize_preview_window(display_width, display_height)
             
             # Calculate and display the actual scale percentage
             actual_scale = int(scale_ratio * 100)
@@ -634,6 +627,54 @@ class LucamStreamApp:
             
         except Exception as e:
             self.update_status(f"Camera initialization error: {e}", "red")
+
+    def _get_preview_size(self):
+        """Return preview size from the current stream scale setting."""
+        frameformat, _ = self.lucam.GetFormat()
+        if self.current_scale == 0:
+            window_width = max(self.master.winfo_width() - 50, 320)
+            window_height = max(self.master.winfo_height() - 350, 240)
+            scale_ratio = min(
+                window_width / frameformat.width,
+                window_height / frameformat.height,
+            )
+        else:
+            scale_ratio = self.current_scale / 100
+        return int(frameformat.width * scale_ratio), int(frameformat.height * scale_ratio)
+
+    def _resize_preview_window(self, width, height):
+        """Resize the Tk host frame and the embedded Lucam display."""
+        if self.preview_window is not None:
+            self.preview_window.geometry(f"{width}x{height}")
+        if self.preview_frame is not None:
+            self.preview_frame.config(width=width, height=height)
+        if self.display_window_created:
+            self.lucam.AdjustDisplayWindow(
+                b'Lucam Video Stream',
+                0,
+                0,
+                width,
+                height,
+            )
+
+    def _on_preview_frame_resize(self, event):
+        """Keep the embedded Lucam display matched to the Tk frame size."""
+        if (
+            self.display_window_created
+            and self.lucam is not None
+            and event.width > 1
+            and event.height > 1
+        ):
+            try:
+                self.lucam.AdjustDisplayWindow(
+                    b'Lucam Video Stream',
+                    0,
+                    0,
+                    event.width,
+                    event.height,
+                )
+            except LucamError as exc:
+                self.update_status(f"Failed to resize stream: {exc}", "red")
     
     def start_streaming(self):
         if not self.lucam:
@@ -641,8 +682,36 @@ class LucamStreamApp:
             return
         
         try:
+            if self.preview_window is not None:
+                self.preview_window.lift()
+                return
+
+            width, height = self._get_preview_size()
+            self.preview_window = tk.Toplevel(self.master)
+            self.preview_window.title("Camera Preview")
+            self.preview_window.geometry(f"{width}x{height}")
+            self.preview_window.protocol("WM_DELETE_WINDOW", self.stop_streaming)
+            self.preview_frame = tk.Frame(
+                self.preview_window,
+                width=width,
+                height=height,
+                bg="black",
+            )
+            self.preview_frame.pack(fill=tk.BOTH, expand=True)
+            self.preview_frame.pack_propagate(False)
+            self.preview_frame.bind("<Configure>", self._on_preview_frame_resize)
+            self.preview_frame.update_idletasks()
+
             if not self.display_window_created:
-                self.lucam.CreateDisplayWindow(b'Lucam Video Stream')
+                self.lucam.CreateDisplayWindow(
+                    b'Lucam Video Stream',
+                    style=LUCAM_CHILD_WINDOW_STYLE,
+                    x=0,
+                    y=0,
+                    width=width,
+                    height=height,
+                    parent=self.preview_frame.winfo_id(),
+                )
                 self.display_window_created = True
 
             # Start video streaming in the display window.
@@ -660,6 +729,19 @@ class LucamStreamApp:
             self.monitor_stream()
             
         except LucamError as e:
+            if self.display_window_created:
+                try:
+                    self.lucam.DestroyDisplayWindow()
+                except Exception:
+                    pass
+                self.display_window_created = False
+            if self.preview_window is not None:
+                try:
+                    self.preview_window.destroy()
+                except Exception:
+                    pass
+                self.preview_window = None
+                self.preview_frame = None
             self.update_status(f"Streaming error: {e}", "red")
             
     def stop_streaming(self):
@@ -679,8 +761,16 @@ class LucamStreamApp:
         except Exception as exc:
             errors.append(str(exc))
 
+        try:
+            if self.preview_window is not None:
+                self.preview_window.destroy()
+        except Exception as exc:
+            errors.append(str(exc))
+
         self.streaming = False
         self.stream_duration = 0
+        self.preview_window = None
+        self.preview_frame = None
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         if errors:
@@ -815,6 +905,12 @@ class LucamStreamApp:
                     if self.display_window_created:
                         self.lucam.DestroyDisplayWindow()
                         self.display_window_created = False
+                except: pass
+                try:
+                    if self.preview_window is not None:
+                        self.preview_window.destroy()
+                        self.preview_window = None
+                        self.preview_frame = None
                 except: pass
 
                 #close the camera connection
