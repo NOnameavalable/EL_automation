@@ -296,6 +296,17 @@ class LucamStreamApp:
             )
             self.master.update()
 
+            def move_to_focus_position(target_position):
+                current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
+                controller_delta = int(target_position - current_position)
+                if controller_delta == 0:
+                    return True
+                logical_pulse = convert_axis_pulse(EL_CAMERA_AXIS, controller_delta)
+                if not self._move_motor(logical_pulse):
+                    self.update_status("Adaptive focus cancelled", "red")
+                    return False
+                return True
+
             def refine_focus(center_position, step_size, best_position, best_score, iteration):
                 if iteration > MAX_FOCUS_ITERATIONS:
                     return best_position, best_score
@@ -310,10 +321,7 @@ class LucamStreamApp:
                 measured_points = []
 
                 for target_position in scan_positions:
-                    current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
-                    pulse = int(target_position - current_position)
-                    if pulse != 0 and not self._move_motor(str(pulse)):
-                        self.update_status("Adaptive focus cancelled", "red")
+                    if not move_to_focus_position(target_position):
                         return
 
                     time.sleep(0.3)
@@ -323,7 +331,7 @@ class LucamStreamApp:
                     self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
                     self.update_status(
                         f"Focus scan {iteration}/{MAX_FOCUS_ITERATIONS}: "
-                        f"{target_position}, Score: {current_score:.2f}",
+                        f"Position: {target_position}, Score: {current_score:.2f}",
                         "black",
                     )
                     self.master.update()
@@ -359,10 +367,7 @@ class LucamStreamApp:
                 except Exception:
                     candidate_reason = "fit failed, measured best"
 
-                current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
-                pulse = int(candidate_position - current_position)
-                if pulse != 0 and not self._move_motor(str(pulse)):
-                    self.update_status("Adaptive focus cancelled", "red")
+                if not move_to_focus_position(candidate_position):
                     return
 
                 time.sleep(0.3)
@@ -372,10 +377,7 @@ class LucamStreamApp:
                 # If the fitted position verifies worse than the best sampled point,
                 # trust the measured point instead of repeating a biased fit.
                 if candidate_score < measured_best_score and candidate_position != measured_best_position:
-                    current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
-                    pulse = int(measured_best_position - current_position)
-                    if pulse != 0 and not self._move_motor(str(pulse)):
-                        self.update_status("Adaptive focus cancelled", "red")
+                    if not move_to_focus_position(measured_best_position):
                         return
                     time.sleep(0.3)
                     snapshot = self.lucam.TakeSnapshot()
@@ -440,10 +442,7 @@ class LucamStreamApp:
                 return
             best_position, best_score = focus_result
 
-            current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
-            pulse = int(best_position - current_position)
-            if pulse != 0 and not self._move_motor(str(pulse)):
-                self.update_status("Adaptive focus cancelled", "red")
+            if not move_to_focus_position(best_position):
                 return
 
             self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
