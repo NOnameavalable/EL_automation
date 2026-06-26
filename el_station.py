@@ -60,6 +60,7 @@ class LucamStreamApp:
         self.focus_overlay_canvas = None
         self.focus_overlay_toolbar = None
         self.focus_overlay_toolbar_window = None
+        self.focus_score_after_id = None
         self.preview_resize_in_progress = False
         self.capture_in_progress = False
         self.stream_duration = 0
@@ -497,6 +498,7 @@ class LucamStreamApp:
                 current_score = self.calculate_focus(snapshot)
                 scores.append(current_score)
                 if i > 0: print(scores[-1] > scores[-2])
+                self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
                 self.update_status(f"{current_score}", "green")
             
             print(scores)
@@ -509,6 +511,7 @@ class LucamStreamApp:
             
             travel_pulse = best_position - (-(step_size*6))
             move(self.motor, {EL_CAMERA_AXIS: str(int(travel_pulse))})
+            self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
             
             
             
@@ -526,10 +529,185 @@ class LucamStreamApp:
             return
         
         if rerun == True: 
+            self.focus_score_var.set("Still focusing - please wait")
             self.find_focus_en()
-            self.focus_score_var.set("Still focusing - please wait", 'red')
         else: 
             self.update_status("!!! DONE !!!", "green")
+
+    def open_focus_overlay(self):
+        """Open a transparent overlay aligned to the visible Lucam image."""
+        if not self.streaming or self.lucam_frame is None:
+            messagebox.showerror("Error", "Open Camera View before selecting focus")
+            return
+
+        geometry = self._current_lucam_frame_geometry()
+        if geometry is None:
+            self.master.after(50, self.open_focus_overlay)
+            return
+        width, height, x, y = geometry
+
+        if self.focus_overlay_window is None:
+            overlay = tk.Toplevel(self.preview_window)
+            overlay.withdraw()
+            overlay.overrideredirect(True)
+            overlay.transient(self.preview_window)
+            overlay.attributes("-topmost", True)
+            try:
+                overlay.attributes("-transparentcolor", "magenta")
+            except tk.TclError:
+                pass
+
+            canvas = tk.Canvas(
+                overlay,
+                bg="magenta",
+                highlightthickness=0,
+                bd=0,
+            )
+            canvas.pack(fill=tk.BOTH, expand=True)
+            toolbar = tk.Frame(canvas, bg="SystemButtonFace")
+            toolbar_window = canvas.create_window(0, 0, anchor=tk.NW, window=toolbar)
+
+            left_controls = tk.Frame(toolbar, bg="SystemButtonFace")
+            left_controls.pack(side=tk.LEFT, padx=4, pady=4)
+            tk.Label(
+                left_controls,
+                textvariable=self.focus_score_var,
+                relief=tk.SUNKEN,
+                anchor=tk.W,
+                width=18,
+            ).pack(side=tk.LEFT, padx=(0, 4))
+            tk.Button(
+                left_controls,
+                text="Find Focus",
+                command=self.find_focus_en,
+            ).pack(side=tk.LEFT)
+            tk.Button(toolbar, text="Close", command=self.close_focus_overlay).pack(
+                side=tk.RIGHT,
+                padx=4,
+                pady=4,
+            )
+            overlay.bind("<Escape>", lambda _event: self.close_focus_overlay())
+            overlay.protocol("WM_DELETE_WINDOW", self.close_focus_overlay)
+            self.focus_overlay_window = overlay
+            self.focus_overlay_canvas = canvas
+            self.focus_overlay_toolbar = toolbar
+            self.focus_overlay_toolbar_window = toolbar_window
+
+        self._position_focus_overlay(width, height, x, y)
+        self._start_focus_score_updates()
+        self.focus_overlay_window.deiconify()
+        self.focus_overlay_window.lift()
+
+    def _current_lucam_frame_geometry(self):
+        if self.lucam_frame is None:
+            return None
+
+        self.lucam_frame.update_idletasks()
+        width = self.lucam_frame.winfo_width()
+        height = self.lucam_frame.winfo_height()
+        x = self.lucam_frame.winfo_rootx()
+        y = self.lucam_frame.winfo_rooty()
+        if width <= 1 or height <= 1 or x <= 0 or y <= 0:
+            return None
+        return width, height, x, y
+
+    def close_focus_overlay(self):
+        self._stop_focus_score_updates()
+        if self.focus_overlay_window is not None:
+            try:
+                self.focus_overlay_window.destroy()
+            except Exception:
+                pass
+        self.focus_overlay_window = None
+        self.focus_overlay_canvas = None
+        self.focus_overlay_toolbar = None
+        self.focus_overlay_toolbar_window = None
+
+    def _position_focus_overlay(self, width=None, height=None, x=None, y=None):
+        if self.focus_overlay_window is None or self.focus_overlay_canvas is None:
+            return
+        if width is None or height is None or x is None or y is None:
+            geometry = self._current_lucam_frame_geometry()
+            if geometry is None:
+                self.close_focus_overlay()
+                return
+            width, height, x, y = geometry
+
+        self.focus_overlay_window.geometry(f"{width}x{height}+{x}+{y}")
+        self.focus_overlay_canvas.config(width=width, height=height)
+        self.focus_overlay_canvas.delete("all")
+
+        rect_size = 30
+        center_x = width // 2
+        center_y = height // 2
+        rect_offsets = (
+            (0, 0),
+            (0, -100),
+            (-100, 0),
+            (100, 0),
+            (0, 100),
+        )
+        if self.focus_overlay_toolbar is not None:
+            self.focus_overlay_toolbar.config(width=width)
+            self.focus_overlay_toolbar_window = self.focus_overlay_canvas.create_window(
+                0,
+                0,
+                anchor=tk.NW,
+                window=self.focus_overlay_toolbar,
+                width=width,
+            )
+        for offset_x, offset_y in rect_offsets:
+            rect_center_x = center_x + offset_x
+            rect_center_y = center_y + offset_y
+            x1 = rect_center_x - rect_size // 2
+            y1 = rect_center_y - rect_size // 2
+            x2 = x1 + rect_size
+            y2 = y1 + rect_size
+            self.focus_overlay_canvas.create_rectangle(
+                x1,
+                y1,
+                x2,
+                y2,
+                outline="black",
+                width=3,
+            )
+
+    def _start_focus_score_updates(self):
+        self._stop_focus_score_updates()
+        self._update_focus_score()
+
+    def _stop_focus_score_updates(self):
+        if self.focus_score_after_id is None:
+            return
+        try:
+            self.master.after_cancel(self.focus_score_after_id)
+        except tk.TclError:
+            pass
+        self.focus_score_after_id = None
+
+    def _update_focus_score(self):
+        if self.focus_overlay_window is None or not self.streaming or self.lucam is None:
+            self.focus_score_after_id = None
+            return
+
+        try:
+            snapshot = self.lucam.TakeSnapshot()
+            current_score = self.calculate_focus(snapshot)
+            self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
+        except Exception:
+            self.focus_score_var.set("Focus Score: --")
+
+        self.focus_score_after_id = self.master.after(500, self._update_focus_score)
+
+    def calculate_focus(self, image):
+        # Resize to 100x100
+        # resized = imutils.resize(image[100:1400,500:1400], width=150)
+        resized = imutils.resize(image, width=150)
+        # Convert to grayscale if needed
+        if len(resized.shape) == 3:
+            resized = cv2.cvtColor(resized[30:-30, 50:-50], cv2.COLOR_RGB2GRAY)
+        # Calculate Laplacian variance
+        return cv2.Laplacian(resized, cv2.CV_64F).var()
             
             
     # ==================== Image Metadata ====================
@@ -622,123 +800,6 @@ class LucamStreamApp:
     def _on_preview_frame_resize(self, event):
         """Force dragged preview width to determine the matching height."""
         self.resize_preview_window(event.width)
-
-    def open_focus_overlay(self):
-        """Open a transparent overlay aligned to the visible Lucam image."""
-        if not self.streaming or self.lucam_frame is None:
-            messagebox.showerror("Error", "Open Camera View before selecting focus")
-            return
-
-        geometry = self._current_lucam_frame_geometry()
-        if geometry is None:
-            self.master.after(50, self.open_focus_overlay)
-            return
-        width, height, x, y = geometry
-
-        if self.focus_overlay_window is None:
-            overlay = tk.Toplevel(self.preview_window)
-            overlay.withdraw()
-            overlay.overrideredirect(True)
-            overlay.transient(self.preview_window)
-            overlay.attributes("-topmost", True)
-            try:
-                overlay.attributes("-transparentcolor", "magenta")
-            except tk.TclError:
-                pass
-
-            canvas = tk.Canvas(
-                overlay,
-                bg="magenta",
-                highlightthickness=0,
-                bd=0,
-            )
-            canvas.pack(fill=tk.BOTH, expand=True)
-            toolbar = tk.Frame(canvas, bg="SystemButtonFace")
-            toolbar_window = canvas.create_window(0, 0, anchor=tk.NW, window=toolbar)
-            tk.Button(toolbar, text="Close", command=self.close_focus_overlay).pack(side=tk.LEFT)
-            overlay.bind("<Escape>", lambda _event: self.close_focus_overlay())
-            overlay.protocol("WM_DELETE_WINDOW", self.close_focus_overlay)
-            self.focus_overlay_window = overlay
-            self.focus_overlay_canvas = canvas
-            self.focus_overlay_toolbar = toolbar
-            self.focus_overlay_toolbar_window = toolbar_window
-
-        self._position_focus_overlay(width, height, x, y)
-        self.focus_overlay_window.deiconify()
-        self.focus_overlay_window.lift()
-
-    def _current_lucam_frame_geometry(self):
-        if self.lucam_frame is None:
-            return None
-
-        self.lucam_frame.update_idletasks()
-        width = self.lucam_frame.winfo_width()
-        height = self.lucam_frame.winfo_height()
-        x = self.lucam_frame.winfo_rootx()
-        y = self.lucam_frame.winfo_rooty()
-        if width <= 1 or height <= 1 or x <= 0 or y <= 0:
-            return None
-        return width, height, x, y
-
-    def close_focus_overlay(self):
-        if self.focus_overlay_window is not None:
-            try:
-                self.focus_overlay_window.destroy()
-            except Exception:
-                pass
-        self.focus_overlay_window = None
-        self.focus_overlay_canvas = None
-        self.focus_overlay_toolbar = None
-        self.focus_overlay_toolbar_window = None
-
-    def _position_focus_overlay(self, width=None, height=None, x=None, y=None):
-        if self.focus_overlay_window is None or self.focus_overlay_canvas is None:
-            return
-        if width is None or height is None or x is None or y is None:
-            geometry = self._current_lucam_frame_geometry()
-            if geometry is None:
-                self.close_focus_overlay()
-                return
-            width, height, x, y = geometry
-
-        self.focus_overlay_window.geometry(f"{width}x{height}+{x}+{y}")
-        self.focus_overlay_canvas.config(width=width, height=height)
-        self.focus_overlay_canvas.delete("all")
-
-        rect_size = 50
-        center_x = width // 2
-        center_y = height // 2
-        rect_offsets = (
-            (0, 0),
-            (0, -100),
-            (-100, 0),
-            (100, 0),
-            (0, 100),
-        )
-        if self.focus_overlay_toolbar is not None:
-            self.focus_overlay_toolbar.config(width=width)
-            self.focus_overlay_toolbar_window = self.focus_overlay_canvas.create_window(
-                0,
-                0,
-                anchor=tk.NW,
-                window=self.focus_overlay_toolbar,
-                width=width,
-            )
-        for offset_x, offset_y in rect_offsets:
-            rect_center_x = center_x + offset_x
-            rect_center_y = center_y + offset_y
-            x1 = rect_center_x - rect_size // 2
-            y1 = rect_center_y - rect_size // 2
-            x2 = x1 + rect_size
-            y2 = y1 + rect_size
-            self.focus_overlay_canvas.create_rectangle(
-                x1,
-                y1,
-                x2,
-                y2,
-                outline="black",
-                width=3,
-            )
 
     def _resize_native_preview_window(self, width, height):
         """Resize the native Lucam display window hosted by the Tk frame."""
@@ -1045,15 +1106,6 @@ class LucamStreamApp:
     
     # ==================== Image Processing Helpers ====================
 
-    def calculate_focus(self, image):
-        # Resize to 100x100
-        # resized = imutils.resize(image[100:1400,500:1400], width=150)
-        resized = imutils.resize(image, width=150)
-        # Convert to grayscale if needed
-        if len(resized.shape) == 3:
-            resized = cv2.cvtColor(resized[30:-30, 50:-50], cv2.COLOR_RGB2GRAY)
-        # Calculate Laplacian variance
-        return cv2.Laplacian(resized, cv2.CV_64F).var()
     def name_check(self):
             filename = "_".join(self.info_vars[field].get() for field in self.info_fields)
             file_path = os.path.join(self.dir_path.get(), f"{filename}.jpg")
