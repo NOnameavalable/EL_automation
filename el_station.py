@@ -18,7 +18,6 @@ from Keithley2400 import set_keithley_output
 from SSD220 import (
     convert_axis_pulse,
     get_pos,
-    move,
     move_with_control,
     set_res_gpib,
 )
@@ -27,6 +26,10 @@ EL_CAMERA_AXIS = "W"
 LUCAM_CHILD_WINDOW_STYLE = 0x56000000  # WS_CHILD | WS_VISIBLE | clipping styles
 FOCUS_ROI_BOX_SIZE = 30
 FOCUS_ROI_OFFSET = 100
+MIN_FOCUS_STEP = 50
+MAX_FOCUS_STEP = 1000
+MAX_FOCUS_ITERATIONS = 6
+FOCUS_SCORE_THRESHOLD = 50.0
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL,
@@ -275,265 +278,183 @@ class LucamStreamApp:
 
     # ==================== Autofocus ====================
 
-    def find_focus(self):
+    def find_focus_adaptive(self):
         if not self.motor or not self.lucam:
             messagebox.showerror("Error", "Motor or camera not initialized")
             return
-        positions = []
-        scores = []
-            
+
         try:
-            # Fixed step size of 2500
-            step_size = 2500
-            current_pos = 0 
-            self.update_status(f"Searching for best focus using 2500 steps per increment - Please wait", "black")
-            
-            # Store positions and their focus scores
-            
-            # Take initial snapshot and calculate focus at current position
-            initial_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]
-            initial_position_value = 0
+            center_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
+            best_position = center_position
             snapshot = self.lucam.TakeSnapshot()
-            current_score = self.calculate_focus(snapshot)
-            
-            # Record initial position and score
-            positions.append(initial_position_value)
-            scores.append(current_score)
-            self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
-            self.update_status(f"Initial position: {initial_position}, Score: {current_score:.2f}", "black")
+            best_score = self.calculate_focus(snapshot)
+            step_size = MAX_FOCUS_STEP
+            self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
+            self.update_status(
+                f"Adaptive focus start. Position: {best_position}, Score: {best_score:.2f}",
+                "black",
+            )
             self.master.update()
-            
-            # First step up (2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(int(step_size))})
-            time.sleep(0.5)  # Wait for stability
-            up1_position = 2500
-            up1_position_value = int(up1_position)
-            
-            snapshot = self.lucam.TakeSnapshot()
-            up1_score = self.calculate_focus(snapshot)
-            
-            # Record first up position and score
-            positions.append(up1_position_value)
-            scores.append(up1_score)
-            self.focus_score_var.set(f"Focus Score: {up1_score:.2f}")
-            self.update_status(f"Up 1 position: {up1_position}, Score: {up1_score:.2f}", "black")
-            self.master.update()
-            
-            # Second step up (another 2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(int(step_size))})
-            time.sleep(0.5)  # Wait for stability
-            up2_position = 5000
-            up2_position_value = int(up2_position)
-            
-            snapshot = self.lucam.TakeSnapshot()
-            up2_score = self.calculate_focus(snapshot)
-            
-            # Record second up position and score
-            positions.append(up2_position_value)
-            scores.append(up2_score)
-            self.focus_score_var.set(f"Focus Score: {up2_score:.2f}")
-            self.update_status(f"Up 2 position: {up2_position}, Score: {up2_score:.2f}", "black")
-            self.master.update()
-            
-            # Move back to initial position
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(2 * step_size))})
-            time.sleep(0.5)  # Wait for stability
-            
-            # First step down (2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(step_size))})
-            time.sleep(0.5)  # Wait for stability
-            down1_position = -2500
-            down1_position_value = int(down1_position)
-            
-            snapshot = self.lucam.TakeSnapshot()
-            down1_score = self.calculate_focus(snapshot)
-            
-            # Record first down position and score
-            positions.append(down1_position_value)
-            scores.append(down1_score)
-            self.focus_score_var.set(f"Focus Score: {down1_score:.2f}")
-            self.update_status(f"Down 1 position: {down1_position}, Score: {down1_score:.2f}", "black")
-            self.master.update()
-            
-            # Second step down (another 2500 steps)
-            move(self.motor, {EL_CAMERA_AXIS: str(-int(step_size))})
-            time.sleep(0.5)  # Wait for stability
-            down2_position = -5000
-            down2_position_value = int(down2_position)
-            
-            snapshot = self.lucam.TakeSnapshot()
-            down2_score = self.calculate_focus(snapshot)
-            
-            # Record second down position and score
-            positions.append(down2_position_value)
-            scores.append(down2_score)
-            self.focus_score_var.set(f"Focus Score: {down2_score:.2f}")
-            self.update_status(f"Down 2 position: {down2_position}, Score: {down2_score:.2f}", "black")
-            self.master.update()
-            
-            # Find the best focus score and position
-            best_score_index = scores.index(max(scores))
-            best_position = positions[best_score_index]
-            print(best_position)
-            best_score = scores[best_score_index]
-            
-                                
-            time.sleep(0.4)
-            move(self.motor, {EL_CAMERA_AXIS: str(5000)})
-            time.sleep(1.4)
-            # If best focus is at one of the extremes, move there but warn user
-            if best_score_index == 0 or best_score_index == 4:
-                # Move to the position with best focus
-                self.update_status(f"Best focus at extreme position: {best_position}, moving there...", "orange")
-                move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
-                
-                self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
-                self.update_status(f"Focus optimization complete. Best at extreme: {best_score:.2f}", "orange")
-            else:
-                # We have 5 points, let's estimate the best position using a parabola
-                # Sort positions and scores together
-                sorted_data = sorted(zip(positions, scores))
-                sorted_positions, sorted_scores = zip(*sorted_data)
-                
-                # Try to fit a parabola (quadratic function) through the five points
-                try:
-                    import numpy as np
-                    from scipy import optimize
-                    
-                    # Define the quadratic function: f(x) = a*x^2 + b*x + c
-                    def quadratic(x, a, b, c):
-                        return a * (x**2) + b * x + c
-                    
-                    # Fit the function to our data points (all 5 points)
-                    params, _ = optimize.curve_fit(quadratic, sorted_positions, sorted_scores)
-                    a, b, c = params
-                    
-                    # Log the fitted parameters for debugging
-                    self.update_status(f"Fit parameters: a={a:.6f}, b={b:.2f}, c={c:.2f}", "black")
+
+            def refine_focus(center_position, step_size, best_position, best_score, iteration):
+                if iteration > MAX_FOCUS_ITERATIONS:
+                    return best_position, best_score
+
+                scan_positions = [
+                    center_position - (2 * step_size),
+                    center_position - step_size,
+                    center_position,
+                    center_position + step_size,
+                    center_position + (2 * step_size),
+                ]
+                measured_points = []
+
+                for target_position in scan_positions:
+                    current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
+                    pulse = int(target_position - current_position)
+                    if pulse != 0 and not self._move_motor(str(pulse)):
+                        self.update_status("Adaptive focus cancelled", "red")
+                        return
+
+                    time.sleep(0.3)
+                    snapshot = self.lucam.TakeSnapshot()
+                    current_score = self.calculate_focus(snapshot)
+                    measured_points.append((int(target_position), current_score))
+                    self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
+                    self.update_status(
+                        f"Focus scan {iteration}/{MAX_FOCUS_ITERATIONS}: "
+                        f"{target_position}, Score: {current_score:.2f}",
+                        "black",
+                    )
                     self.master.update()
 
-                    
-                    
-                    # The maximum of a parabola is at x = -b/(2*a)
-                    # But only if a < 0 (opens downward)
+                measured_best_position, measured_best_score = max(
+                    measured_points,
+                    key=lambda point: point[1],
+                )
+                positions = np.array([point[0] for point in measured_points], dtype=float)
+                scores = np.array([point[1] for point in measured_points], dtype=float)
+                window_min = min(scan_positions)
+                window_max = max(scan_positions)
+                candidate_position = measured_best_position
+                candidate_reason = "measured best"
+                peak_near_edge = measured_best_position in (window_min, window_max)
+
+                try:
+                    a, b, c = np.polyfit(positions, scores, 2)
                     if a < 0:
-                        estimated_best_position = int(-b / (2 * a))
-                        print(estimated_best_position)
-                        
-                        # Check if the estimated position is within our search range
-                        min_pos = min(positions)
-                        max_pos = max(positions)
-                        if min_pos <= estimated_best_position <= max_pos:
-                            # Move to the estimated best position
-                            self.update_status(f"Moving to estimated best position: {estimated_best_position}...", "black")
-                            move(self.motor, {EL_CAMERA_AXIS: str(estimated_best_position)})
-                            
-                            # Take a snapshot at the estimated best position and check focus
-                            time.sleep(0.5)
-                            snapshot = self.lucam.TakeSnapshot()
-                            estimated_score = self.calculate_focus(snapshot)
-                            
-                            self.focus_score_var.set(f"Focus Score: {estimated_score:.2f}")
-                            self.update_status(f"Focus optimization complete. Estimated best score: {estimated_score:.2f}", "green")
-                        else:
-                            # If estimated position is outside our range, move to the best known position
-                            self.update_status(f"Estimated position out of range, moving to best known position...", "black")
-                            move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
-                            self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
-                            self.update_status(f"Focus optimization complete. Best score: {best_score:.2f}", "green")
-                    else:
-                        # If parabola opens upward, can't find a maximum - use best known position
-                        self.update_status(f"Cannot determine best focus, moving to best known position...", "black")
-                        move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
-                        self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
-                        self.update_status(f"Focus optimization complete. Best score: {best_score:.2f}", "green")
-                except:
-                    # If curve fitting fails, fall back to best known position
-                    self.update_status(f"Error in focus estimation, moving to best known position...", "black")
-                    move(self.motor, {EL_CAMERA_AXIS: str(int(best_position))})
-                    self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
-                    self.update_status(f"Focus optimization complete. Best score: {best_score:.2f}", "green")
-            
-        except Exception as e:
-            self.update_status(f"Focus finding error: {e}", "red")
-            # Try to return to initial position on error
-            try:
-                print('fail')
-            except:
-                pass
-            
-            # For debugging purposes, print all measured points
-            self.update_status(f"Debug - All points: {list(zip(positions, scores))}", "red")
-            self.master.update()
-        
-    def find_focus_en(self):
-        if not self.motor or not self.lucam:
-            messagebox.showerror("Error", "Motor or camera not initialized")
-            return
-        positions = []
-        scores = []
-        rerun = False
-        try:
-            snapshot = self.lucam.TakeSnapshot()
-            current_score = self.calculate_focus(snapshot)
-            # Fixed step size of 2500
-            if current_score < 90: 
-                step_size = 1000
-                rerun = True
-            elif (current_score >= 90) == True  &  (current_score <= 200)==True: 
-                step_size = 500
-                rerun = True
-            else: 
-                step_size = 200
-                rerun = False
-            
-            # Store positions and their focus scores
-            positions = [0, step_size,step_size*2,step_size*3,step_size*4,step_size*5,step_size*6, -step_size*1, -step_size*2, -step_size*3, -step_size*4, -step_size*5, -step_size*6]
-            pulse_send = [0,step_size,step_size,step_size,step_size,step_size,step_size, -step_size*7, -step_size,-step_size,-step_size,-step_size,-step_size]
-            scores = []
-            
-            for i,position in enumerate(positions):
-                move(self.motor, {EL_CAMERA_AXIS: str(int(pulse_send[i]))})
+                        fitted_peak = -b / (2 * a)
+                        fitted_score = (a * fitted_peak * fitted_peak) + (b * fitted_peak) + c
+                        fit_inside_scan = window_min <= fitted_peak <= window_max
+                        peak_near_edge = (
+                            peak_near_edge
+                            or fitted_peak <= window_min + (step_size / 2)
+                            or fitted_peak >= window_max - (step_size / 2)
+                        )
+                        # Trust the fitted peak only when it is a real in-window maximum
+                        # and not sitting near the edge of the sampled scan range.
+                        if fit_inside_scan and not peak_near_edge:
+                            candidate_position = int(round(fitted_peak))
+                            candidate_reason = f"fitted peak ({fitted_score:.2f})"
+                except Exception:
+                    candidate_reason = "fit failed, measured best"
+
+                current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
+                pulse = int(candidate_position - current_position)
+                if pulse != 0 and not self._move_motor(str(pulse)):
+                    self.update_status("Adaptive focus cancelled", "red")
+                    return
+
                 time.sleep(0.3)
                 snapshot = self.lucam.TakeSnapshot()
-                current_score = self.calculate_focus(snapshot)
-                scores.append(current_score)
-                if i > 0: print(scores[-1] > scores[-2])
-                self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
-                self.update_status(f"{current_score}", "green")
-            
-            print(scores)
-            
-            # Find the best focus score and position
-            best_score_index = scores.index(max(scores))
-            best_position = positions[best_score_index]
-            # print(best_position)
-            best_score = scores[best_score_index]
-            
-            travel_pulse = best_position - (-(step_size*6))
-            move(self.motor, {EL_CAMERA_AXIS: str(int(travel_pulse))})
+                candidate_score = self.calculate_focus(snapshot)
+
+                # If the fitted position verifies worse than the best sampled point,
+                # trust the measured point instead of repeating a biased fit.
+                if candidate_score < measured_best_score and candidate_position != measured_best_position:
+                    current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
+                    pulse = int(measured_best_position - current_position)
+                    if pulse != 0 and not self._move_motor(str(pulse)):
+                        self.update_status("Adaptive focus cancelled", "red")
+                        return
+                    time.sleep(0.3)
+                    snapshot = self.lucam.TakeSnapshot()
+                    candidate_position = measured_best_position
+                    candidate_score = self.calculate_focus(snapshot)
+                    candidate_reason = "verified measured best"
+
+                self.focus_score_var.set(f"Focus Score: {candidate_score:.2f}")
+                score_delta = candidate_score - best_score
+                self.update_status(
+                    f"Focus iteration {iteration}: {candidate_reason}, "
+                    f"Position: {candidate_position}, Score: {candidate_score:.2f}, "
+                    f"Delta: {score_delta:.2f}",
+                    "black",
+                )
+                self.master.update()
+
+                if score_delta >= FOCUS_SCORE_THRESHOLD:
+                    best_position = candidate_position
+                    best_score = candidate_score
+                    if peak_near_edge:
+                        step_size = min(
+                            MAX_FOCUS_STEP,
+                            max(step_size + MIN_FOCUS_STEP, int(step_size * 1.5)),
+                        )
+                    else:
+                        step_size = max(MIN_FOCUS_STEP, step_size // 2)
+                    return refine_focus(
+                        candidate_position,
+                        step_size,
+                        best_position,
+                        best_score,
+                        iteration + 1,
+                    )
+
+                if score_delta >= 0:
+                    return candidate_position, candidate_score
+
+                # A worse verified peak means this window was misleading. Shift the
+                # next scan toward the best measured point and widen the step, so the
+                # next iteration does not simply refit the same bad window.
+                step_size = min(
+                    MAX_FOCUS_STEP,
+                    max(step_size + MIN_FOCUS_STEP, int(step_size * 1.5)),
+                )
+                return refine_focus(
+                    measured_best_position,
+                    step_size,
+                    best_position,
+                    best_score,
+                    iteration + 1,
+                )
+
+            focus_result = refine_focus(
+                center_position,
+                step_size,
+                best_position,
+                best_score,
+                1,
+            )
+            if focus_result is None:
+                return
+            best_position, best_score = focus_result
+
+            current_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
+            pulse = int(best_position - current_position)
+            if pulse != 0 and not self._move_motor(str(pulse)):
+                self.update_status("Adaptive focus cancelled", "red")
+                return
+
             self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
-            
-            
-            
+            self.update_status(
+                f"Adaptive focus complete. Position: {best_position}, Score: {best_score:.2f}",
+                "green",
+            )
+            self.master.update()
         except Exception as e:
             self.update_status(f"Focus finding error: {e}", "red")
-            # Try to return to initial position on error
-            try:
-                print('fail')
-            except:
-                pass
-            
-            # For debugging purposes, print all measured points
-            self.update_status(f"Debug - All points: {list(zip(positions, scores))}", "red")
             self.master.update()
-            return
-        
-        if rerun == True: 
-            self.focus_score_var.set("Still focusing - please wait")
-            self.find_focus_en()
-        else: 
-            self.update_status("!!! DONE !!!", "green")
 
     def open_focus_overlay(self):
         """Open a transparent overlay aligned to the visible Lucam image."""
@@ -585,7 +506,7 @@ class LucamStreamApp:
             tk.Button(
                 left_controls,
                 text="Find Focus",
-                command=self.find_focus_en,
+                command=self.find_focus_adaptive,
             ).pack(side=tk.LEFT)
             tk.Button(toolbar, text="Close", command=self.close_focus_overlay).pack(
                 side=tk.RIGHT,
