@@ -25,6 +25,8 @@ from SSD220 import (
 
 EL_CAMERA_AXIS = "W"
 LUCAM_CHILD_WINDOW_STYLE = 0x56000000  # WS_CHILD | WS_VISIBLE | clipping styles
+FOCUS_ROI_BOX_SIZE = 30
+FOCUS_ROI_OFFSET = 100
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL,
@@ -60,7 +62,6 @@ class LucamStreamApp:
         self.focus_overlay_canvas = None
         self.focus_overlay_toolbar = None
         self.focus_overlay_toolbar_window = None
-        self.focus_score_after_id = None
         self.preview_resize_in_progress = False
         self.capture_in_progress = False
         self.stream_duration = 0
@@ -578,6 +579,11 @@ class LucamStreamApp:
             ).pack(side=tk.LEFT, padx=(0, 4))
             tk.Button(
                 left_controls,
+                text="Get Score",
+                command=self.update_current_focus_score,
+            ).pack(side=tk.LEFT, padx=(0, 4))
+            tk.Button(
+                left_controls,
                 text="Find Focus",
                 command=self.find_focus_en,
             ).pack(side=tk.LEFT)
@@ -594,7 +600,6 @@ class LucamStreamApp:
             self.focus_overlay_toolbar_window = toolbar_window
 
         self._position_focus_overlay(width, height, x, y)
-        self._start_focus_score_updates()
         self.focus_overlay_window.deiconify()
         self.focus_overlay_window.lift()
 
@@ -612,7 +617,6 @@ class LucamStreamApp:
         return width, height, x, y
 
     def close_focus_overlay(self):
-        self._stop_focus_score_updates()
         if self.focus_overlay_window is not None:
             try:
                 self.focus_overlay_window.destroy()
@@ -637,15 +641,14 @@ class LucamStreamApp:
         self.focus_overlay_canvas.config(width=width, height=height)
         self.focus_overlay_canvas.delete("all")
 
-        rect_size = 30
         center_x = width // 2
         center_y = height // 2
         rect_offsets = (
             (0, 0),
-            (0, -100),
-            (-100, 0),
-            (100, 0),
-            (0, 100),
+            (0, -FOCUS_ROI_OFFSET),
+            (-FOCUS_ROI_OFFSET, 0),
+            (FOCUS_ROI_OFFSET, 0),
+            (0, FOCUS_ROI_OFFSET),
         )
         if self.focus_overlay_toolbar is not None:
             self.focus_overlay_toolbar.config(width=width)
@@ -659,10 +662,10 @@ class LucamStreamApp:
         for offset_x, offset_y in rect_offsets:
             rect_center_x = center_x + offset_x
             rect_center_y = center_y + offset_y
-            x1 = rect_center_x - rect_size // 2
-            y1 = rect_center_y - rect_size // 2
-            x2 = x1 + rect_size
-            y2 = y1 + rect_size
+            x1 = rect_center_x - FOCUS_ROI_BOX_SIZE // 2
+            y1 = rect_center_y - FOCUS_ROI_BOX_SIZE // 2
+            x2 = x1 + FOCUS_ROI_BOX_SIZE
+            y2 = y1 + FOCUS_ROI_BOX_SIZE
             self.focus_overlay_canvas.create_rectangle(
                 x1,
                 y1,
@@ -672,41 +675,58 @@ class LucamStreamApp:
                 width=3,
             )
 
-    def _start_focus_score_updates(self):
-        self._stop_focus_score_updates()
-        self._update_focus_score()
-
-    def _stop_focus_score_updates(self):
-        if self.focus_score_after_id is None:
-            return
-        try:
-            self.master.after_cancel(self.focus_score_after_id)
-        except tk.TclError:
-            pass
-        self.focus_score_after_id = None
-
-    def _update_focus_score(self):
-        if self.focus_overlay_window is None or not self.streaming or self.lucam is None:
-            self.focus_score_after_id = None
+    def update_current_focus_score(self):
+        if not self.streaming or self.lucam is None:
+            messagebox.showerror("Error", "Open Camera View before getting focus score")
             return
 
         try:
             snapshot = self.lucam.TakeSnapshot()
             current_score = self.calculate_focus(snapshot)
             self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
-        except Exception:
+        except Exception as exc:
             self.focus_score_var.set("Focus Score: --")
+            self.update_status(f"Focus score error: {exc}", "red")
 
-        self.focus_score_after_id = self.master.after(500, self._update_focus_score)
+    def _focus_roi_display_bounds(self, display_width, display_height):
+        half_box = FOCUS_ROI_BOX_SIZE // 2
+        center_x = display_width / 2
+        center_y = display_height / 2
+        left = center_x - FOCUS_ROI_OFFSET - half_box
+        top = center_y - FOCUS_ROI_OFFSET - half_box
+        right = center_x + FOCUS_ROI_OFFSET + half_box
+        bottom = center_y + FOCUS_ROI_OFFSET + half_box
+        return left, top, right, bottom
+
+    def _focus_roi_crop(self, image):
+        image_height, image_width = image.shape[:2]
+        geometry = self._current_lucam_frame_geometry()
+        if geometry is None:
+            display_width = self.frame_width or image_width
+            display_height = self.frame_height or image_height
+        else:
+            display_width, display_height, _x, _y = geometry
+
+        if display_width <= 0 or display_height <= 0:
+            return image
+
+        left, top, right, bottom = self._focus_roi_display_bounds(display_width, display_height)
+        scale_x = image_width / display_width
+        scale_y = image_height / display_height
+        x1 = max(0, int(left * scale_x))
+        y1 = max(0, int(top * scale_y))
+        x2 = min(image_width, int((right * scale_x) + 0.999999))
+        y2 = min(image_height, int((bottom * scale_y) + 0.999999))
+
+        if x2 <= x1 + 1 or y2 <= y1 + 1:
+            return image
+        return image[y1:y2, x1:x2]
 
     def calculate_focus(self, image):
-        # Resize to 100x100
-        # resized = imutils.resize(image[100:1400,500:1400], width=150)
-        resized = imutils.resize(image, width=150)
-        # Convert to grayscale if needed
+        roi_image = self._focus_roi_crop(image)
+        resized = imutils.resize(roi_image, width=150)
         if len(resized.shape) == 3:
-            resized = cv2.cvtColor(resized[30:-30, 50:-50], cv2.COLOR_RGB2GRAY)
-        # Calculate Laplacian variance
+            resized = cv2.cvtColor(resized, cv2.COLOR_RGB2GRAY)
         return cv2.Laplacian(resized, cv2.CV_64F).var()
             
             
