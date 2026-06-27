@@ -28,8 +28,9 @@ FOCUS_ROI_BOX_SIZE = 30
 FOCUS_ROI_OFFSET = 100
 MIN_FOCUS_STEP = 50
 MAX_FOCUS_STEP = 1000
-MAX_FOCUS_ITERATIONS = 6
-FOCUS_SCORE_THRESHOLD = 50.0
+MAX_FOCUS_ATTEMPTS = 10
+MAX_FOCUS_REFINEMENTS = 6
+FOCUS_SCORE_THRESHOLD = 30.0
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL,
@@ -285,13 +286,12 @@ class LucamStreamApp:
 
         try:
             center_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
-            best_position = center_position
             snapshot = self.lucam.TakeSnapshot()
-            best_score = self.calculate_focus(snapshot)
+            center_score = self.calculate_focus(snapshot)
             step_size = MAX_FOCUS_STEP
-            self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
+            self.focus_score_var.set(f"Focus Score: {center_score:.2f}")
             self.update_status(
-                f"Adaptive focus start. Position: {best_position}, Score: {best_score:.2f}",
+                f"Adaptive focus start. Position: {center_position}, Score: {center_score:.2f}",
                 "black",
             )
             self.master.update()
@@ -307,9 +307,18 @@ class LucamStreamApp:
                     return False
                 return True
 
-            def refine_focus(center_position, step_size, best_position, best_score, iteration):
-                if iteration > MAX_FOCUS_ITERATIONS:
-                    return best_position, best_score
+            def score_at_position(position):
+                if not move_to_focus_position(position):
+                    return None
+                time.sleep(0.3)
+                snapshot = self.lucam.TakeSnapshot()
+                return self.calculate_focus(snapshot)
+
+            def refine_focus(center_position, center_score, step_size, attempt, refinements):
+                if attempt >= MAX_FOCUS_ATTEMPTS or refinements >= MAX_FOCUS_REFINEMENTS:
+                    return center_position, center_score
+
+                attempt += 1
 
                 scan_positions = [
                     center_position - (2 * step_size),
@@ -321,16 +330,14 @@ class LucamStreamApp:
                 measured_points = []
 
                 for target_position in scan_positions:
-                    if not move_to_focus_position(target_position):
+                    current_score = score_at_position(target_position)
+                    if current_score is None:
                         return
 
-                    time.sleep(0.3)
-                    snapshot = self.lucam.TakeSnapshot()
-                    current_score = self.calculate_focus(snapshot)
                     measured_points.append((int(target_position), current_score))
                     self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
                     self.update_status(
-                        f"Focus scan {iteration}/{MAX_FOCUS_ITERATIONS}: "
+                        f"Focus scan {attempt}/{MAX_FOCUS_ATTEMPTS}: "
                         f"Position: {target_position}, Score: {current_score:.2f}",
                         "black",
                     )
@@ -345,8 +352,8 @@ class LucamStreamApp:
                 window_min = min(scan_positions)
                 window_max = max(scan_positions)
                 candidate_position = measured_best_position
-                candidate_reason = "measured best"
                 peak_near_edge = measured_best_position in (window_min, window_max)
+                fitted_candidate = False
 
                 try:
                     a, b, c = np.polyfit(positions, scores, 2)
@@ -363,80 +370,95 @@ class LucamStreamApp:
                         # and not sitting near the edge of the sampled scan range.
                         if fit_inside_scan and not peak_near_edge:
                             candidate_position = int(round(fitted_peak))
-                            candidate_reason = f"fitted peak ({fitted_score:.2f})"
+                            fitted_candidate = True
                 except Exception:
-                    candidate_reason = "fit failed, measured best"
+                    pass
 
-                if not move_to_focus_position(candidate_position):
-                    return
-
-                time.sleep(0.3)
-                snapshot = self.lucam.TakeSnapshot()
-                candidate_score = self.calculate_focus(snapshot)
-
-                # If the fitted position verifies worse than the best sampled point,
-                # trust the measured point instead of repeating a biased fit.
-                if candidate_score < measured_best_score and candidate_position != measured_best_position:
-                    if not move_to_focus_position(measured_best_position):
+                # Fitted peaks must be verified with a real image. If no fit is
+                # trusted, use the best score already measured during the scan.
+                if fitted_candidate:
+                    candidate_score = score_at_position(candidate_position)
+                    if candidate_score is None:
                         return
-                    time.sleep(0.3)
-                    snapshot = self.lucam.TakeSnapshot()
-                    candidate_position = measured_best_position
-                    candidate_score = self.calculate_focus(snapshot)
-                    candidate_reason = "verified measured best"
+                    candidate_reason = f"fitted peak ({fitted_score:.2f})"
+                else:
+                    candidate_score = measured_best_score
+                    candidate_reason = "measured best"
 
                 self.focus_score_var.set(f"Focus Score: {candidate_score:.2f}")
-                score_delta = candidate_score - best_score
+                score_delta = candidate_score - center_score
                 self.update_status(
-                    f"Focus iteration {iteration}: {candidate_reason}, "
+                    f"Focus attempt {attempt}: {candidate_reason}, "
                     f"Position: {candidate_position}, Score: {candidate_score:.2f}, "
                     f"Delta: {score_delta:.2f}",
                     "black",
                 )
                 self.master.update()
 
-                if score_delta >= FOCUS_SCORE_THRESHOLD:
-                    best_position = candidate_position
-                    best_score = candidate_score
-                    if peak_near_edge:
-                        step_size = min(
-                            MAX_FOCUS_STEP,
-                            max(step_size + MIN_FOCUS_STEP, int(step_size * 1.5)),
-                        )
-                    else:
-                        step_size = max(MIN_FOCUS_STEP, step_size // 2)
+                # The threshold is an uncertainty range: changes inside it are
+                # treated as insignificant in either direction.
+                if abs(score_delta) < FOCUS_SCORE_THRESHOLD:
+                    return center_position, center_score
+
+                next_step = max(MIN_FOCUS_STEP, step_size // 2)
+                if score_delta > 0:
                     return refine_focus(
                         candidate_position,
-                        step_size,
-                        best_position,
-                        best_score,
-                        iteration + 1,
+                        candidate_score,
+                        next_step,
+                        attempt,
+                        refinements + 1,
                     )
 
-                if score_delta >= 0:
-                    return candidate_position, candidate_score
+                # A significantly worse candidate may be noise. Compare median
+                # scores using the original score plus two fresh scores at each
+                # position, then recurse from the median winner.
+                candidate_scores = [candidate_score]
+                for _ in range(2):
+                    score = score_at_position(candidate_position)
+                    if score is None:
+                        return
+                    candidate_scores.append(score)
 
-                # A worse verified peak means this window was misleading. Shift the
-                # next scan toward the best measured point and widen the step, so the
-                # next iteration does not simply refit the same bad window.
-                step_size = min(
-                    MAX_FOCUS_STEP,
-                    max(step_size + MIN_FOCUS_STEP, int(step_size * 1.5)),
+                center_scores = [center_score]
+                for _ in range(2):
+                    score = score_at_position(center_position)
+                    if score is None:
+                        return
+                    center_scores.append(score)
+
+                candidate_median = float(np.median(candidate_scores))
+                center_median = float(np.median(center_scores))
+                if candidate_median > center_median:
+                    chosen_position = candidate_position
+                    chosen_score = candidate_median
+                    chosen_refinements = refinements + 1
+                else:
+                    chosen_position = center_position
+                    chosen_score = center_median
+                    chosen_refinements = refinements
+
+                self.focus_score_var.set(f"Focus Score: {chosen_score:.2f}")
+                self.update_status(
+                    f"Focus median check: Position: {chosen_position}, "
+                    f"Score: {chosen_score:.2f}",
+                    "black",
                 )
+                self.master.update()
                 return refine_focus(
-                    measured_best_position,
-                    step_size,
-                    best_position,
-                    best_score,
-                    iteration + 1,
+                    chosen_position,
+                    chosen_score,
+                    next_step,
+                    attempt,
+                    chosen_refinements,
                 )
 
             focus_result = refine_focus(
                 center_position,
+                center_score,
                 step_size,
-                best_position,
-                best_score,
-                1,
+                0,
+                0,
             )
             if focus_result is None:
                 return
