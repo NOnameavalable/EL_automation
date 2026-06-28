@@ -341,7 +341,8 @@ class LucamStreamApp:
                     self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
                     self.update_status(
                         f"Focus scan {attempt}/{MAX_FOCUS_ATTEMPTS}: "
-                        f"Position: {target_position}, Score: {current_score:.2f}",
+                        f"Step: {step_size}, Position: {target_position}, "
+                        f"Score: {current_score:.2f}",
                         "black",
                     )
                     self.master.update()
@@ -393,7 +394,8 @@ class LucamStreamApp:
                 score_threshold = abs(center_score) * FOCUS_SCORE_THRESHOLD_RATIO
                 self.update_status(
                     f"Focus attempt {attempt}: {candidate_reason}, "
-                    f"Position: {candidate_position}, Score: {candidate_score:.2f}, "
+                    f"Step: {step_size}, Position: {candidate_position}, "
+                    f"Score: {candidate_score:.2f}, "
                     f"Delta: {score_delta:.2f}, Threshold: {score_threshold:.2f}",
                     "black",
                 )
@@ -404,7 +406,7 @@ class LucamStreamApp:
                 if abs(score_delta) < score_threshold:
                     return center_position, center_score
 
-                next_step = max(MIN_FOCUS_STEP, step_size // 2)
+                next_step = MAX_FOCUS_STEP if peak_near_edge else max(MIN_FOCUS_STEP, step_size // 2)
                 if score_delta > 0:
                     next_refinements = refinements if peak_near_edge else refinements + 1
                     return refine_focus(
@@ -446,7 +448,7 @@ class LucamStreamApp:
                 self.focus_score_var.set(f"Focus Score: {chosen_score:.2f}")
                 self.update_status(
                     f"Focus median check: Position: {chosen_position}, "
-                    f"Score: {chosen_score:.2f}",
+                    f"Score: {chosen_score:.2f}, Next step: {next_step}",
                     "black",
                 )
                 self.master.update()
