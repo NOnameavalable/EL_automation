@@ -577,7 +577,6 @@ class StageGui(tk.Tk):
             return
 
         try:
-            self._set_keithley_outputs_off()
             set_keithley_current(self._light_keithley, self._light_current_a)
             set_keithley_current(self._probe_keithley, self._probe_current_magnitude_a)
             self._probe_polarity = 1
