@@ -30,7 +30,7 @@ MIN_FOCUS_STEP = 50
 MAX_FOCUS_STEP = 1000
 MAX_FOCUS_ATTEMPTS = 10
 MAX_FOCUS_REFINEMENTS = 6
-FOCUS_SCORE_THRESHOLD = 30.0
+FOCUS_SCORE_THRESHOLD_RATIO = 0.05
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(
     wintypes.BOOL,
@@ -390,17 +390,18 @@ class LucamStreamApp:
 
                 self.focus_score_var.set(f"Focus Score: {candidate_score:.2f}")
                 score_delta = candidate_score - center_score
+                score_threshold = abs(center_score) * FOCUS_SCORE_THRESHOLD_RATIO
                 self.update_status(
                     f"Focus attempt {attempt}: {candidate_reason}, "
                     f"Position: {candidate_position}, Score: {candidate_score:.2f}, "
-                    f"Delta: {score_delta:.2f}",
+                    f"Delta: {score_delta:.2f}, Threshold: {score_threshold:.2f}",
                     "black",
                 )
                 self.master.update()
 
                 # The threshold is an uncertainty range: changes inside it are
                 # treated as insignificant in either direction.
-                if abs(score_delta) < FOCUS_SCORE_THRESHOLD:
+                if abs(score_delta) < score_threshold:
                     return center_position, center_score
 
                 next_step = max(MIN_FOCUS_STEP, step_size // 2)
