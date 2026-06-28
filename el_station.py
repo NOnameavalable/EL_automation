@@ -406,12 +406,13 @@ class LucamStreamApp:
 
                 next_step = max(MIN_FOCUS_STEP, step_size // 2)
                 if score_delta > 0:
+                    next_refinements = refinements if peak_near_edge else refinements + 1
                     return refine_focus(
                         candidate_position,
                         candidate_score,
                         next_step,
                         attempt,
-                        refinements + 1,
+                        next_refinements,
                     )
 
                 # A significantly worse candidate may be noise. Compare median
@@ -436,7 +437,7 @@ class LucamStreamApp:
                 if candidate_median > center_median:
                     chosen_position = candidate_position
                     chosen_score = candidate_median
-                    chosen_refinements = refinements + 1
+                    chosen_refinements = refinements if peak_near_edge else refinements + 1
                 else:
                     chosen_position = center_position
                     chosen_score = center_median
