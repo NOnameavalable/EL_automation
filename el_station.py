@@ -66,6 +66,8 @@ class LucamStreamApp:
         self.focus_overlay_canvas = None
         self.focus_overlay_toolbar = None
         self.focus_overlay_toolbar_window = None
+        self.focus_roi_center = None
+        self.focus_roi_box_ids = {}
         self.preview_resize_in_progress = False
         self.capture_in_progress = False
         self.stream_duration = 0
@@ -528,6 +530,26 @@ class LucamStreamApp:
                 left_controls,
                 text="Find Focus",
                 command=self.find_focus_adaptive,
+            ).pack(side=tk.LEFT, padx=(0, 4))
+            tk.Button(
+                left_controls,
+                text="Up",
+                command=lambda: self.move_focus_roi(0, -FOCUS_ROI_BOX_SIZE),
+            ).pack(side=tk.LEFT, padx=(0, 2))
+            tk.Button(
+                left_controls,
+                text="Down",
+                command=lambda: self.move_focus_roi(0, FOCUS_ROI_BOX_SIZE),
+            ).pack(side=tk.LEFT, padx=(0, 2))
+            tk.Button(
+                left_controls,
+                text="Left",
+                command=lambda: self.move_focus_roi(-FOCUS_ROI_BOX_SIZE, 0),
+            ).pack(side=tk.LEFT, padx=(0, 2))
+            tk.Button(
+                left_controls,
+                text="Right",
+                command=lambda: self.move_focus_roi(FOCUS_ROI_BOX_SIZE, 0),
             ).pack(side=tk.LEFT)
             tk.Button(toolbar, text="Close", command=self.close_focus_overlay).pack(
                 side=tk.RIGHT,
@@ -568,6 +590,8 @@ class LucamStreamApp:
         self.focus_overlay_canvas = None
         self.focus_overlay_toolbar = None
         self.focus_overlay_toolbar_window = None
+        self.focus_roi_center = None
+        self.focus_roi_box_ids = {}
 
     def _position_focus_overlay(self, width=None, height=None, x=None, y=None):
         if self.focus_overlay_window is None or self.focus_overlay_canvas is None:
@@ -581,19 +605,29 @@ class LucamStreamApp:
 
         self.focus_overlay_window.geometry(f"{width}x{height}+{x}+{y}")
         self.focus_overlay_canvas.config(width=width, height=height)
-        self.focus_overlay_canvas.delete("all")
+        self.focus_overlay_canvas.delete("roi")
+        self.focus_roi_box_ids = {}
 
-        center_x = width // 2
-        center_y = height // 2
+        if self.focus_roi_center is None:
+            center_x = width // 2
+            center_y = height // 2
+        else:
+            center_x, center_y = self.focus_roi_center
+            center_x = min(max(center_x, 0), width)
+            center_y = min(max(center_y, 0), height)
+        self.focus_roi_center = (center_x, center_y)
+
         rect_offsets = (
-            (0, 0),
-            (0, -FOCUS_ROI_OFFSET),
-            (-FOCUS_ROI_OFFSET, 0),
-            (FOCUS_ROI_OFFSET, 0),
-            (0, FOCUS_ROI_OFFSET),
+            ("center", 0, 0),
+            ("top", 0, -FOCUS_ROI_OFFSET),
+            ("left", -FOCUS_ROI_OFFSET, 0),
+            ("right", FOCUS_ROI_OFFSET, 0),
+            ("bottom", 0, FOCUS_ROI_OFFSET),
         )
         if self.focus_overlay_toolbar is not None:
             self.focus_overlay_toolbar.config(width=width)
+            if self.focus_overlay_toolbar_window is not None:
+                self.focus_overlay_canvas.delete(self.focus_overlay_toolbar_window)
             self.focus_overlay_toolbar_window = self.focus_overlay_canvas.create_window(
                 0,
                 0,
@@ -601,21 +635,31 @@ class LucamStreamApp:
                 window=self.focus_overlay_toolbar,
                 width=width,
             )
-        for offset_x, offset_y in rect_offsets:
+        for box_name, offset_x, offset_y in rect_offsets:
             rect_center_x = center_x + offset_x
             rect_center_y = center_y + offset_y
             x1 = rect_center_x - FOCUS_ROI_BOX_SIZE // 2
             y1 = rect_center_y - FOCUS_ROI_BOX_SIZE // 2
             x2 = x1 + FOCUS_ROI_BOX_SIZE
             y2 = y1 + FOCUS_ROI_BOX_SIZE
-            self.focus_overlay_canvas.create_rectangle(
+            self.focus_roi_box_ids[box_name] = self.focus_overlay_canvas.create_rectangle(
                 x1,
                 y1,
                 x2,
                 y2,
                 outline="black",
                 width=3,
+                tags=("roi", box_name),
             )
+
+    def move_focus_roi(self, dx, dy):
+        if self.focus_overlay_canvas is None or not self.focus_roi_box_ids:
+            return
+        self.focus_overlay_canvas.move("roi", dx, dy)
+        center_coords = self.focus_overlay_canvas.coords(self.focus_roi_box_ids["center"])
+        if len(center_coords) == 4:
+            x1, y1, x2, y2 = center_coords
+            self.focus_roi_center = ((x1 + x2) / 2, (y1 + y2) / 2)
 
     def update_current_focus_score(self):
         if not self.streaming or self.lucam is None:
@@ -630,10 +674,17 @@ class LucamStreamApp:
             self.focus_score_var.set("Focus Score: --")
             self.update_status(f"Focus score error: {exc}", "red")
 
-    def _focus_roi_display_bounds(self, display_width, display_height):
+    def _focus_roi_center_from_box(self):
+        if self.focus_overlay_canvas is None or "center" not in self.focus_roi_box_ids:
+            raise RuntimeError("Focus ROI center box is not available")
+        center_coords = self.focus_overlay_canvas.coords(self.focus_roi_box_ids["center"])
+        if len(center_coords) != 4:
+            raise RuntimeError("Focus ROI center box coordinates are not available")
+        x1, y1, x2, y2 = center_coords
+        return (x1 + x2) / 2, (y1 + y2) / 2
+
+    def _focus_roi_display_bounds(self, center_x, center_y):
         half_box = FOCUS_ROI_BOX_SIZE // 2
-        center_x = display_width / 2
-        center_y = display_height / 2
         left = center_x - FOCUS_ROI_OFFSET - half_box
         top = center_y - FOCUS_ROI_OFFSET - half_box
         right = center_x + FOCUS_ROI_OFFSET + half_box
@@ -644,15 +695,14 @@ class LucamStreamApp:
         image_height, image_width = image.shape[:2]
         geometry = self._current_lucam_frame_geometry()
         if geometry is None:
-            display_width = self.frame_width or image_width
-            display_height = self.frame_height or image_height
-        else:
-            display_width, display_height, _x, _y = geometry
+            raise RuntimeError("Focus ROI geometry is not available")
+        display_width, display_height, _x, _y = geometry
 
         if display_width <= 0 or display_height <= 0:
             return image
 
-        left, top, right, bottom = self._focus_roi_display_bounds(display_width, display_height)
+        center_x, center_y = self._focus_roi_center_from_box()
+        left, top, right, bottom = self._focus_roi_display_bounds(center_x, center_y)
         scale_x = image_width / display_width
         scale_y = image_height / display_height
         x1 = max(0, int(left * scale_x))
