@@ -579,6 +579,8 @@ class StageGui(tk.Tk):
         try:
             set_keithley_current(self._light_keithley, self._light_current_a)
             set_keithley_current(self._probe_keithley, self._probe_current_magnitude_a)
+            set_keithley_output(self._light_keithley, True)
+            self._set_output_button_state("light", True)
             self._probe_polarity = 1
         except Exception as exc:
             self._log(f"Keithley preparation error: {exc}")
