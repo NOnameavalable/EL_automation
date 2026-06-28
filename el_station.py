@@ -162,7 +162,7 @@ class LucamStreamApp:
         self.start_button = tk.Button(streaming_frame, text="Open Camera View", command=self.start_streaming)
         self.start_button.pack(side=tk.LEFT, padx=5)
         
-        self.stop_button = tk.Button(streaming_frame, text="Close Camera View", command=self.stop_streaming, state=tk.DISABLED)
+        self.stop_button = tk.Button(streaming_frame, text="Close Camera View", command=self.close_camera_view, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
 
         # Snapshot controls
@@ -615,7 +615,6 @@ class LucamStreamApp:
         if width is None or height is None or x is None or y is None:
             geometry = self._current_lucam_frame_geometry()
             if geometry is None:
-                self.close_focus_overlay()
                 return
             width, height, x, y = geometry
 
@@ -872,31 +871,38 @@ class LucamStreamApp:
             return
         
         try:
-            if self.preview_window is not None:
+            width = int(self.frame_width * 0.5)
+            height = int(width / self.frame_aspect)
+
+            if self.preview_window is not None and self.streaming:
                 self.preview_window.lift()
                 return
 
-            width = int(self.frame_width * 0.5)
-            height = int(width / self.frame_aspect)
-            self.preview_window = tk.Toplevel(self.master)
-            self.preview_window.title("Camera Preview")
-            self.preview_window.geometry(f"{width}x{height}")
-            self.preview_window.resizable(False, False)
-            self.preview_window.bind("<Configure>", lambda _event: self._position_focus_overlay())
-            self.preview_window.protocol("WM_DELETE_WINDOW", self.stop_streaming)
-            self.preview_frame = tk.Frame(
-                self.preview_window,
-                width=width,
-                height=height,
-                bg="black",
-            )
-            self.preview_frame.pack(fill=tk.BOTH, expand=True)
-            self.preview_frame.pack_propagate(False)
-            self.preview_frame.bind("<Configure>", self._on_preview_frame_resize)
-            self.lucam_frame = tk.Frame(self.preview_frame, bg="black")
-            self.lucam_frame.place(x=0, y=0, width=width, height=height)
-            self.preview_frame.update_idletasks()
-            self.lucam_frame.update_idletasks()
+            if self.preview_window is None:
+                self.preview_window = tk.Toplevel(self.master)
+                self.preview_window.title("Camera Preview")
+                self.preview_window.geometry(f"{width}x{height}")
+                self.preview_window.resizable(False, False)
+                self.preview_window.bind("<Configure>", lambda _event: self._position_focus_overlay())
+                self.preview_window.protocol("WM_DELETE_WINDOW", self.close_camera_view)
+                self.preview_frame = tk.Frame(
+                    self.preview_window,
+                    width=width,
+                    height=height,
+                    bg="black",
+                )
+                self.preview_frame.pack(fill=tk.BOTH, expand=True)
+                self.preview_frame.pack_propagate(False)
+                self.preview_frame.bind("<Configure>", self._on_preview_frame_resize)
+                self.lucam_frame = tk.Frame(self.preview_frame, bg="black")
+                self.lucam_frame.place(x=0, y=0, width=width, height=height)
+                self.preview_frame.update_idletasks()
+                self.lucam_frame.update_idletasks()
+            else:
+                self.preview_window.lift()
+                if self.preview_frame is not None:
+                    width = self.preview_frame.winfo_width() or width
+                    height = self.preview_frame.winfo_height() or height
 
             if not self.display_window_created:
                 self.lucam.CreateDisplayWindow(
@@ -943,7 +949,7 @@ class LucamStreamApp:
                 self.lucam_frame = None
             self.update_status(f"Streaming error: {e}", "red")
             
-    def stop_streaming(self):
+    def stop_streaming(self, show_status: bool = True):
         if not self.lucam:
             return
 
@@ -957,6 +963,23 @@ class LucamStreamApp:
             if self.display_window_created:
                 self.lucam.DestroyDisplayWindow()
                 self.display_window_created = False
+        except Exception as exc:
+            errors.append(str(exc))
+
+        self.streaming = False
+        self.stream_duration = 0
+        self.start_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.DISABLED)
+        if show_status:
+            if errors:
+                self.update_status(f"Stop streaming error: {'; '.join(errors)}", "red")
+            else:
+                self.update_status("Streaming stopped", "red")
+
+    def close_camera_view(self):
+        errors = []
+        try:
+            self.stop_streaming(show_status=False)
         except Exception as exc:
             errors.append(str(exc))
 
@@ -1085,7 +1108,7 @@ class LucamStreamApp:
         self.stream_duration += wait_duration
         
         if self.stream_duration >= self.max_stream_time:
-            self.stop_streaming()
+            self.close_camera_view()
             messagebox.showerror("stream limit",  f"Maximum stream time of {self.max_stream_time} seconds reached")
             return
         
