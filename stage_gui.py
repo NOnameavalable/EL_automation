@@ -231,8 +231,6 @@ class StageGui(tk.Tk):
         self._stop_requested = threading.Event()
         self._resume_allowed = threading.Event()
         self._resume_allowed.set()
-        self.auto_refocus_var = tk.BooleanVar(value=False)
-        self._focus_check_enabled = False
         self._focus_reference_score: Optional[float] = None
         self.home_position: dict[str, str] = {axis: "0" for axis in AXES}
         self._home_is_set = False
@@ -282,6 +280,15 @@ class StageGui(tk.Tk):
             command=self._set_contact,
         )
         set_contact_button.pack(pady=(0, 8))
+
+        check_focus_button = tk.Button(
+            setup_frame,
+            text="Check Focus",
+            width=12,
+            height=2,
+            command=self._check_focus,
+        )
+        check_focus_button.pack(pady=(0, 8))
 
         move_home_button = tk.Button(
             setup_frame,
@@ -369,15 +376,6 @@ class StageGui(tk.Tk):
             command=lambda: self._toggle_keithley_output("probe"),
         )
         self.probe_output_button.pack(side=tk.LEFT, padx=5)
-
-        focus_check = tk.Checkbutton(
-            pad_frame,
-            text="Auto refocus on score drop",
-            variable=self.auto_refocus_var,
-            bg=WINDOW_BACKGROUND,
-            activebackground=WINDOW_BACKGROUND,
-        )
-        focus_check.grid(row=6, column=0, columnspan=4, pady=(8, 0))
 
         """================ Machine Movement Pad Set ================"""
         # Machine A pad: X/Y movement for the left stage.
@@ -568,22 +566,15 @@ class StageGui(tk.Tk):
         if self.el_app is None:
             self._log("Open EL Station before starting")
             return
+        if self._focus_reference_score is None:
+            self._log("Check Focus before starting")
+            return
         if self._light_keithley is None or self._probe_keithley is None:
             self._log("Connect both Keithleys before starting")
             return
         if self._light_current_a is None or self._probe_current_magnitude_a is None:
             self._log("Apply both Keithley current levels before starting")
             return
-
-        self._focus_check_enabled = self.auto_refocus_var.get()
-        self._focus_reference_score = None
-        if self._focus_check_enabled:
-            try:
-                self._focus_reference_score = self.el_app.get_current_focus_score()
-            except Exception as exc:
-                self._log(f"Focus reference error: {exc}")
-                return
-            self._log(f"Focus reference score: {self._focus_reference_score:.2f}")
 
         try:
             self._set_keithley_outputs_off()
@@ -626,13 +617,9 @@ class StageGui(tk.Tk):
                 home_position=self.home_position,
                 contact_z=self.contact_z,
                 capture_el=self._capture_el_for_die,
-                focus_reference_score=self._focus_reference_score
-                if self._focus_check_enabled
-                else None,
-                get_focus_score=self._get_focus_score_for_die
-                if self._focus_check_enabled
-                else None,
-                refocus=self._refocus_for_die if self._focus_check_enabled else None,
+                focus_reference_score=self._focus_reference_score,
+                get_focus_score=self._get_focus_score_for_die,
+                refocus=self._refocus_for_die,
                 focus_threshold_ratio=FOCUS_SCORE_THRESHOLD_RATIO,
                 stop_requested=self._stop_requested.is_set,
                 resume_allowed=self._resume_allowed,
@@ -654,6 +641,21 @@ class StageGui(tk.Tk):
         self._log(message)
 
     """================ EL Station Methods ================"""
+
+    def _check_focus(self) -> None:
+        """Store the current EL focus score as the required sequence reference."""
+        if self.el_app is None:
+            self._log("Open EL Station before checking focus")
+            return
+
+        try:
+            self._focus_reference_score = self.el_app.get_current_focus_score()
+        except Exception as exc:
+            self._focus_reference_score = None
+            self._log(f"Focus check error: {exc}")
+            return
+
+        self._log(f"Focus checked. Reference score: {self._focus_reference_score:.2f}")
 
     def _capture_el_for_die(self, die: str) -> object:
         """Run EL capture on Tk's main thread and wait for it to finish."""
@@ -791,6 +793,7 @@ class StageGui(tk.Tk):
 
         self.el_app = None
         self._el_window = None
+        self._focus_reference_score = None
         self._log("EL Station closed")
 
     """================ Set Methods ================"""
@@ -867,6 +870,7 @@ class StageGui(tk.Tk):
 
         self._home_is_set = True
         self.contact_z = None
+        self._focus_reference_score = None
         self._log(f"Home set: {self.home_position}")
 
     def _set_contact(self) -> None:
@@ -881,6 +885,7 @@ class StageGui(tk.Tk):
             self._log(f"Set contact error: {exc}")
             return
 
+        self._focus_reference_score = None
         self._log(f"Contact Z set: {self.contact_z}")
 
     def _get_stage_inst(self) -> MessageBasedResource:
