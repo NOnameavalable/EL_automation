@@ -95,6 +95,7 @@ class LucamStreamApp:
         self.steps_var = tk.StringVar(value="10000")
         self.fine_steps_var = tk.StringVar(value="1000")
         self.focus_score_var = tk.StringVar(value="Focus Score: 0")
+        self.focus_roi_scale_var = tk.DoubleVar(value=1.0)
 
         # Widgets assigned during UI setup
         self.start_button = None
@@ -531,25 +532,34 @@ class LucamStreamApp:
                 text="Find Focus",
                 command=self.find_focus_adaptive,
             ).pack(side=tk.LEFT, padx=(0, 4))
+            tk.Label(left_controls, text="Scale:").pack(side=tk.LEFT)
+            scale_entry = tk.Entry(left_controls, textvariable=self.focus_roi_scale_var, width=5)
+            scale_entry.pack(side=tk.LEFT, padx=(2, 2))
+            scale_entry.bind("<Return>", lambda _event: self.apply_focus_roi_scale())
+            tk.Button(
+                left_controls,
+                text="Apply",
+                command=self.apply_focus_roi_scale,
+            ).pack(side=tk.LEFT, padx=(0, 4))
             tk.Button(
                 left_controls,
                 text="Up",
-                command=lambda: self.move_focus_roi(0, -FOCUS_ROI_BOX_SIZE),
+                command=lambda: self.move_focus_roi(0, -self._focus_roi_box_size()),
             ).pack(side=tk.LEFT, padx=(0, 2))
             tk.Button(
                 left_controls,
                 text="Down",
-                command=lambda: self.move_focus_roi(0, FOCUS_ROI_BOX_SIZE),
+                command=lambda: self.move_focus_roi(0, self._focus_roi_box_size()),
             ).pack(side=tk.LEFT, padx=(0, 2))
             tk.Button(
                 left_controls,
                 text="Left",
-                command=lambda: self.move_focus_roi(-FOCUS_ROI_BOX_SIZE, 0),
+                command=lambda: self.move_focus_roi(-self._focus_roi_box_size(), 0),
             ).pack(side=tk.LEFT, padx=(0, 2))
             tk.Button(
                 left_controls,
                 text="Right",
-                command=lambda: self.move_focus_roi(FOCUS_ROI_BOX_SIZE, 0),
+                command=lambda: self.move_focus_roi(self._focus_roi_box_size(), 0),
             ).pack(side=tk.LEFT)
             tk.Button(toolbar, text="Close", command=self.close_focus_overlay).pack(
                 side=tk.RIGHT,
@@ -619,10 +629,10 @@ class LucamStreamApp:
 
         rect_offsets = (
             ("center", 0, 0),
-            ("top", 0, -FOCUS_ROI_OFFSET),
-            ("left", -FOCUS_ROI_OFFSET, 0),
-            ("right", FOCUS_ROI_OFFSET, 0),
-            ("bottom", 0, FOCUS_ROI_OFFSET),
+            ("top", 0, -self._focus_roi_offset()),
+            ("left", -self._focus_roi_offset(), 0),
+            ("right", self._focus_roi_offset(), 0),
+            ("bottom", 0, self._focus_roi_offset()),
         )
         if self.focus_overlay_toolbar is not None:
             self.focus_overlay_toolbar.config(width=width)
@@ -638,10 +648,11 @@ class LucamStreamApp:
         for box_name, offset_x, offset_y in rect_offsets:
             rect_center_x = center_x + offset_x
             rect_center_y = center_y + offset_y
-            x1 = rect_center_x - FOCUS_ROI_BOX_SIZE // 2
-            y1 = rect_center_y - FOCUS_ROI_BOX_SIZE // 2
-            x2 = x1 + FOCUS_ROI_BOX_SIZE
-            y2 = y1 + FOCUS_ROI_BOX_SIZE
+            box_size = self._focus_roi_box_size()
+            x1 = rect_center_x - box_size / 2
+            y1 = rect_center_y - box_size / 2
+            x2 = x1 + box_size
+            y2 = y1 + box_size
             self.focus_roi_box_ids[box_name] = self.focus_overlay_canvas.create_rectangle(
                 x1,
                 y1,
@@ -651,6 +662,23 @@ class LucamStreamApp:
                 width=3,
                 tags=("roi", box_name),
             )
+
+    def _focus_roi_scale(self):
+        try:
+            return max(0.1, float(self.focus_roi_scale_var.get()))
+        except (tk.TclError, ValueError):
+            return 1.0
+
+    def _focus_roi_box_size(self):
+        return max(1, int(round(FOCUS_ROI_BOX_SIZE * self._focus_roi_scale())))
+
+    def _focus_roi_offset(self):
+        return max(1, int(round(FOCUS_ROI_OFFSET * self._focus_roi_scale())))
+
+    def apply_focus_roi_scale(self):
+        scale = self._focus_roi_scale()
+        self.focus_roi_scale_var.set(scale)
+        self._position_focus_overlay()
 
     def move_focus_roi(self, dx, dy):
         if self.focus_overlay_canvas is None or not self.focus_roi_box_ids:
@@ -684,11 +712,12 @@ class LucamStreamApp:
         return (x1 + x2) / 2, (y1 + y2) / 2
 
     def _focus_roi_display_bounds(self, center_x, center_y):
-        half_box = FOCUS_ROI_BOX_SIZE // 2
-        left = center_x - FOCUS_ROI_OFFSET - half_box
-        top = center_y - FOCUS_ROI_OFFSET - half_box
-        right = center_x + FOCUS_ROI_OFFSET + half_box
-        bottom = center_y + FOCUS_ROI_OFFSET + half_box
+        half_box = self._focus_roi_box_size() / 2
+        offset = self._focus_roi_offset()
+        left = center_x - offset - half_box
+        top = center_y - offset - half_box
+        right = center_x + offset + half_box
+        bottom = center_y + offset + half_box
         return left, top, right, bottom
 
     def _focus_roi_crop(self, image):
