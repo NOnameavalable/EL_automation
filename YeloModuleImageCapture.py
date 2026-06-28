@@ -13,9 +13,9 @@ from typing import Optional
 from SSD220 import div
 from SSD220 import convert_axis_pulse
 from SSD220 import get_pos
-from SSD220 import move
 from SSD220 import move_with_control
 from SSD220 import move_to_origin
+from SSD220 import move_to_position
 from SSD220 import set_res_gpib
 from pyvisa.resources import MessageBasedResource
 
@@ -135,16 +135,10 @@ def _relative_pulse(current: Point, target: Point) -> dict[str, str]:
 
 def _move_to_home(stage: MessageBasedResource, home_position: dict[str, str]) -> None:
     """Move every recorded axis back to its home position."""
-    axes = list(home_position)
-    current_position = get_pos(stage, axes)
-    pulse_to_home = {
-        axis: convert_axis_pulse(
-            axis,
-            int(home_position[axis]) - int(current_position[axis]),
-        )
-        for axis in axes
-    }
-    move(stage, pulse_to_home, read_position=False)
+    # Home return should move X before other axes so the stage clears the row
+    # direction before correcting Y/Z.
+    axes = ["X"] + [axis for axis in home_position if axis != "X"]
+    move_to_position(stage, home_position, axes=axes, read_position=False)
 
 
 """================ Main Sequence Methods ================"""

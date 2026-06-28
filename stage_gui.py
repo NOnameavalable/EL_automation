@@ -27,6 +27,7 @@ from SSD220 import (
     convert_axis_pulse,
     get_pos,
     move,
+    move_to_position,
     set_all_axes_speed_table,
     set_res_gpib,
 )
@@ -502,15 +503,12 @@ class StageGui(tk.Tk):
         """Move all configured axes back to the recorded home position."""
         try:
             stage_inst = self._get_stage_inst()
-            current_position = get_pos(stage_inst)
-            pulse_to_home = {
-                axis: convert_axis_pulse(
-                    axis,
-                    int(self.home_position[axis]) - int(current_position[axis]),
-                )
-                for axis in AXES
-            }
-            move(stage_inst, pulse_to_home, read_position=False)
+            move_to_position(
+                stage_inst,
+                self.home_position,
+                axes=list(AXES),
+                read_position=False,
+            )
         except Exception as exc:
             self._log(f"Move home error: {exc}")
             return

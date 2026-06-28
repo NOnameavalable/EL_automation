@@ -422,8 +422,8 @@ def move_to_origin(
 
     Args:
         inst: Open PyVISA instrument resource for the SSD220 controller.
-        axes: Axes to move back to zero. If omitted, only X/Y are moved for
-            backward compatibility with the die-stage workflow.
+        axes: Axes to move back to zero. If omitted, all configured axes are
+            moved.
         fast_speed: Optional fast speeds as an axis dictionary. If omitted,
             `move()` uses its default speeds.
         low_speed: Optional low/start speeds as an axis dictionary. If omitted,
@@ -436,18 +436,63 @@ def move_to_origin(
         Current positions for all configured axes.
     """
     axes = list(AXES) if axes is None else axes
-    current = get_pos(inst, axes)
-    pulse_to_origin = {
-        axis: convert_axis_pulse(axis, -int(current[axis]))
-        for axis in axes
-    }
-    return move(
+    return move_to_position(
         inst,
-        pulse_to_origin,
+        {axis: "0" for axis in axes},
+        axes=axes,
         fast_speed=fast_speed,
         low_speed=low_speed,
         wait=wait,
         reaction_time=reaction_time,
+    )
+
+
+def move_to_position(
+    inst: MessageBasedResource,
+    target_position: Point,
+    axes: Optional[list[Axis]] = None,
+    fast_speed: Optional[dict[str, str]] = None,
+    low_speed: Optional[dict[str, str]] = None,
+    wait: bool = True,
+    reaction_time: float = 0.5,
+    read_position: bool = True,
+) -> Point:
+    """Move selected axes to recorded controller-coordinate positions.
+
+    Args:
+        inst: Open PyVISA instrument resource for the SSD220 controller.
+        target_position: Axis positions as returned by `get_pos()`, such as
+            `{"X": "0", "Y": "0", "Z": "1000"}`.
+        axes: Axes to move. If omitted, moves every axis in `target_position`.
+        fast_speed: Optional fast speeds as an axis dictionary.
+        low_speed: Optional low/start speeds as an axis dictionary.
+        wait: If `True`, wait for each moved axis to finish before returning.
+        reaction_time: Extra seconds to wait after each moved axis reports
+            that motion is complete.
+        read_position: If `True`, query and return current positions after
+            movement. If `False`, skip position readback.
+
+    Returns:
+        Current positions for all configured axes if `read_position` is `True`.
+        Otherwise, an empty dictionary.
+    """
+    axes = list(target_position) if axes is None else axes
+    current = get_pos(inst, axes)
+    pulse_to_target = {
+        axis: convert_axis_pulse(
+            axis,
+            int(target_position[axis]) - int(current[axis]),
+        )
+        for axis in axes
+    }
+    return move(
+        inst,
+        pulse_to_target,
+        fast_speed=fast_speed,
+        low_speed=low_speed,
+        wait=wait,
+        reaction_time=reaction_time,
+        read_position=read_position,
     )
 
 
