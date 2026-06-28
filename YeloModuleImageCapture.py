@@ -149,6 +149,10 @@ def main(
     home_position: dict[str, str],
     contact_z: str,
     capture_el: Optional[Callable[[str], object]] = None,
+    focus_reference_score: Optional[float] = None,
+    get_focus_score: Optional[Callable[[str], float]] = None,
+    refocus: Optional[Callable[[str], bool]] = None,
+    focus_threshold_ratio: float = 0.05,
     stop_requested: Optional[Callable[[], bool]] = None,
     resume_allowed: Optional[Event] = None,
 ) -> None:
@@ -159,6 +163,10 @@ def main(
         home_position: Recorded workflow home position as `{"X": x, "Y": y}`.
         contact_z: Recorded Z contact position.
         capture_el: Optional callback called after Z moves down at each die.
+        focus_reference_score: Optional starting focus score reference.
+        get_focus_score: Optional callback returning the current focus score.
+        refocus: Optional callback that runs autofocus and returns success.
+        focus_threshold_ratio: Score-drop ratio that triggers autofocus.
         stop_requested: Optional callback returning `True` when Stop is clicked.
         resume_allowed: Optional event that is set while the sequence may run.
 
@@ -183,6 +191,11 @@ def main(
     print("Start position:", get_pos(stage, ["X", "Y", "Z"]))
     print("Home position:", home_position)
     print("Contact Z:", contact_z)
+    if focus_reference_score is not None:
+        if get_focus_score is None or refocus is None:
+            raise ValueError("focus score checking requires get_focus_score and refocus callbacks")
+        print("Focus reference score:", f"{focus_reference_score:.2f}")
+
     for die in travel_order:
         target_position = die_positions[die]
         xy_pulse = _relative_pulse(current_position, target_position)
@@ -206,6 +219,49 @@ def main(
             print("Stop requested during XY movement. Moving to home.")
             _move_to_home(stage, home_position)
             return
+
+        if focus_reference_score is not None:
+            if stop_requested is not None and stop_requested():
+                print("Stop requested before focus check. Moving to home.")
+                _move_to_home(stage, home_position)
+                return
+
+            try:
+                current_focus_score = get_focus_score(die)
+            except Exception as exc:
+                print(f"Focus score check failed for die {die}: {exc}. Moving to home.")
+                _move_to_home(stage, home_position)
+                return
+
+            focus_threshold = abs(focus_reference_score) * focus_threshold_ratio
+            minimum_focus_score = focus_reference_score - focus_threshold
+            print(
+                f"Focus check die {die}: score={current_focus_score:.2f}, "
+                f"reference={focus_reference_score:.2f}, "
+                f"minimum={minimum_focus_score:.2f}"
+            )
+
+            if current_focus_score < minimum_focus_score:
+                print(f"Focus score below threshold for die {die}. Running autofocus.")
+                try:
+                    refocus_succeeded = refocus(die)
+                except Exception as exc:
+                    print(f"Autofocus failed for die {die}: {exc}. Moving to home.")
+                    _move_to_home(stage, home_position)
+                    return
+
+                if not refocus_succeeded:
+                    print("Autofocus failed or was cancelled. Moving to home.")
+                    _move_to_home(stage, home_position)
+                    return
+
+                try:
+                    focus_reference_score = get_focus_score(die)
+                except Exception as exc:
+                    print(f"Focus reference update failed for die {die}: {exc}. Moving to home.")
+                    _move_to_home(stage, home_position)
+                    return
+                print("Updated focus reference score:", f"{focus_reference_score:.2f}")
 
         if not move_with_control(
             stage,

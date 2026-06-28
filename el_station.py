@@ -282,10 +282,10 @@ class LucamStreamApp:
 
     # ==================== Autofocus ====================
 
-    def find_focus_adaptive(self):
+    def find_focus_adaptive(self) -> bool:
         if not self.motor or not self.lucam:
             messagebox.showerror("Error", "Motor or camera not initialized")
-            return
+            return False
 
         try:
             center_position = int(float(get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]))
@@ -468,11 +468,11 @@ class LucamStreamApp:
                 0,
             )
             if focus_result is None:
-                return
+                return False
             best_position, best_score = focus_result
 
             if not move_to_focus_position(best_position):
-                return
+                return False
 
             self.focus_score_var.set(f"Focus Score: {best_score:.2f}")
             self.update_status(
@@ -480,9 +480,11 @@ class LucamStreamApp:
                 "green",
             )
             self.master.update()
+            return True
         except Exception as e:
             self.update_status(f"Focus finding error: {e}", "red")
             self.master.update()
+            return False
 
     def open_focus_overlay(self):
         """Open a transparent overlay aligned to the visible Lucam image."""
@@ -694,17 +696,21 @@ class LucamStreamApp:
             self.focus_roi_center = ((x1 + x2) / 2, (y1 + y2) / 2)
 
     def update_current_focus_score(self):
-        if not self.streaming or self.lucam is None:
-            messagebox.showerror("Error", "Open Camera View before getting focus score")
-            return
-
         try:
-            snapshot = self.lucam.TakeSnapshot()
-            current_score = self.calculate_focus(snapshot)
-            self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
+            self.get_current_focus_score()
         except Exception as exc:
+            messagebox.showerror("Error", str(exc))
             self.focus_score_var.set("Focus Score: --")
             self.update_status(f"Focus score error: {exc}", "red")
+
+    def get_current_focus_score(self) -> float:
+        if not self.streaming or self.lucam is None:
+            raise RuntimeError("Open Camera View before getting focus score")
+
+        snapshot = self.lucam.TakeSnapshot()
+        current_score = self.calculate_focus(snapshot)
+        self.focus_score_var.set(f"Focus Score: {current_score:.2f}")
+        return current_score
 
     def _focus_roi_center_from_box(self):
         if self.focus_overlay_canvas is None or "center" not in self.focus_roi_box_ids:

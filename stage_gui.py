@@ -31,7 +31,7 @@ from SSD220 import (
     set_all_axes_speed_table,
     set_res_gpib,
 )
-from el_station import LucamStreamApp
+from el_station import FOCUS_SCORE_THRESHOLD_RATIO, LucamStreamApp
 from YeloModuleImageCapture import main as run_yelo_main
 
 PAD_BACKGROUND = "#dedede"
@@ -43,7 +43,7 @@ KEITHLEY_GPIB_BUS = "0"
 MOTOR_GPIB_BUS = "0"
 LIGHT_KEITHLEY_ADDRESS = "13"
 PROBE_KEITHLEY_ADDRESS = "24"  # Set this before enabling automated EL capture.
-LIGHT_COMPLIANCE_V = 15.0
+LIGHT_COMPLIANCE_V = 12.0
 PROBE_COMPLIANCE_V = 2.5
 KEITHLEY_CURRENT_RANGE_A = 1.0
 JOG_PULSE = "1000000"
@@ -231,6 +231,9 @@ class StageGui(tk.Tk):
         self._stop_requested = threading.Event()
         self._resume_allowed = threading.Event()
         self._resume_allowed.set()
+        self.auto_refocus_var = tk.BooleanVar(value=False)
+        self._focus_check_enabled = False
+        self._focus_reference_score: Optional[float] = None
         self.home_position: dict[str, str] = {axis: "0" for axis in AXES}
         self._home_is_set = False
         self.contact_z: Optional[str] = None
@@ -367,6 +370,15 @@ class StageGui(tk.Tk):
         )
         self.probe_output_button.pack(side=tk.LEFT, padx=5)
 
+        focus_check = tk.Checkbutton(
+            pad_frame,
+            text="Auto refocus on score drop",
+            variable=self.auto_refocus_var,
+            bg=WINDOW_BACKGROUND,
+            activebackground=WINDOW_BACKGROUND,
+        )
+        focus_check.grid(row=6, column=0, columnspan=4, pady=(8, 0))
+
         """================ Machine Movement Pad Set ================"""
         # Machine A pad: X/Y movement for the left stage.
         machine_a = TrianglePad(
@@ -404,8 +416,8 @@ class StageGui(tk.Tk):
         # EL camera movement is handled by the EL Station window on axis W.
 
         """================ Speed Slider Set ================"""
-        # Visual-only speed slider demo. It does not control motor speed yet.
-        speed_demo = tk.Scale(
+        # Jog speed slider scales manual stage movement speed.
+        speed_slider = tk.Scale(
             pad_frame,
             from_=100,
             to=0,
@@ -418,10 +430,10 @@ class StageGui(tk.Tk):
             borderwidth=0,
             relief="flat",
             troughcolor=PAD_BACKGROUND,
-            command=self._record_speed_demo,
+            command=self._record_speed,
         )
-        speed_demo.set(50)
-        speed_demo.grid(row=1, column=3, padx=12)
+        speed_slider.set(50)
+        speed_slider.grid(row=1, column=3, padx=12)
 
         """================ Monitor Window Set ================"""
         self.monitor = tk.Text(
@@ -433,18 +445,6 @@ class StageGui(tk.Tk):
             wrap="word",
         )
         self.monitor.grid(row=0, column=0, columnspan=4, pady=(0, 12), sticky="ew")
-
-        self.status = tk.StringVar(value="Ready")
-        status_label = tk.Label(
-            self,
-            textvariable=self.status,
-            anchor="w",
-            bg="#e8e8e8",
-            font=("Segoe UI", 10),
-            padx=12,
-            pady=8,
-        )
-        status_label.pack(fill="x", side="bottom")
 
         """================ Command Operation Set ================"""
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -575,6 +575,16 @@ class StageGui(tk.Tk):
             self._log("Apply both Keithley current levels before starting")
             return
 
+        self._focus_check_enabled = self.auto_refocus_var.get()
+        self._focus_reference_score = None
+        if self._focus_check_enabled:
+            try:
+                self._focus_reference_score = self.el_app.get_current_focus_score()
+            except Exception as exc:
+                self._log(f"Focus reference error: {exc}")
+                return
+            self._log(f"Focus reference score: {self._focus_reference_score:.2f}")
+
         try:
             self._set_keithley_outputs_off()
             set_keithley_current(self._light_keithley, self._light_current_a)
@@ -616,6 +626,14 @@ class StageGui(tk.Tk):
                 home_position=self.home_position,
                 contact_z=self.contact_z,
                 capture_el=self._capture_el_for_die,
+                focus_reference_score=self._focus_reference_score
+                if self._focus_check_enabled
+                else None,
+                get_focus_score=self._get_focus_score_for_die
+                if self._focus_check_enabled
+                else None,
+                refocus=self._refocus_for_die if self._focus_check_enabled else None,
+                focus_threshold_ratio=FOCUS_SCORE_THRESHOLD_RATIO,
                 stop_requested=self._stop_requested.is_set,
                 resume_allowed=self._resume_allowed,
             )
@@ -679,6 +697,55 @@ class StageGui(tk.Tk):
         if "error" in result:
             raise result["error"]
         return result.get("value")
+
+    def _get_focus_score_for_die(self, die: str) -> float:
+        """Read the EL focus score on Tk's main thread."""
+        done = threading.Event()
+        result: dict[str, object] = {}
+
+        def get_score() -> None:
+            try:
+                if self.el_app is None:
+                    raise RuntimeError("EL Station is not open")
+
+                score = self.el_app.get_current_focus_score()
+                self._log(f"Focus score for die {die}: {score:.2f}")
+                result["value"] = score
+            except Exception as exc:
+                result["error"] = exc
+            finally:
+                done.set()
+
+        self.after(0, get_score)
+        done.wait()
+
+        if "error" in result:
+            raise result["error"]
+        return float(result["value"])
+
+    def _refocus_for_die(self, die: str) -> bool:
+        """Run EL autofocus on Tk's main thread."""
+        done = threading.Event()
+        result: dict[str, object] = {}
+
+        def refocus() -> None:
+            try:
+                if self.el_app is None:
+                    raise RuntimeError("EL Station is not open")
+
+                self._log(f"Running autofocus for die {die}")
+                result["value"] = self.el_app.find_focus_adaptive()
+            except Exception as exc:
+                result["error"] = exc
+            finally:
+                done.set()
+
+        self.after(0, refocus)
+        done.wait()
+
+        if "error" in result:
+            raise result["error"]
+        return bool(result.get("value"))
 
     def _open_el_station(self) -> None:
         """Open the EL station GUI in a second window."""
@@ -785,7 +852,7 @@ class StageGui(tk.Tk):
 
         return die_config
 
-    def _record_speed_demo(self, value: str) -> None:
+    def _record_speed(self, value: str) -> None:
         """Record the jog speed slider value."""
         self._speed_slider_value = int(value)
         self._log(f"Speed: {value}")
@@ -999,7 +1066,6 @@ class StageGui(tk.Tk):
 
     def _log(self, message: str) -> None:
         """Show the latest message and append it to the monitor window."""
-        self.status.set(message)
         self.monitor.configure(state="normal")
         self.monitor.insert("end", f"{message}\n")
         self.monitor.see("end")
