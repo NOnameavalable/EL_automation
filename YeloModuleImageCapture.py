@@ -14,7 +14,6 @@ from SSD220 import div
 from SSD220 import convert_axis_pulse
 from SSD220 import get_pos
 from SSD220 import move_with_control
-from SSD220 import move_to_origin
 from SSD220 import move_to_position
 from SSD220 import set_res_gpib
 from pyvisa.resources import MessageBasedResource
@@ -133,14 +132,6 @@ def _relative_pulse(current: Point, target: Point) -> dict[str, str]:
     }
 
 
-def _move_to_home(stage: MessageBasedResource, home_position: dict[str, str]) -> None:
-    """Move every recorded axis back to its home position."""
-    # Home return should move X before other axes so the stage clears the row
-    # direction before correcting Y/Z.
-    axes = ["X"] + [axis for axis in home_position if axis != "X"]
-    move_to_position(stage, home_position, axes=axes, read_position=False)
-
-
 """================ Main Sequence Methods ================"""
 
 
@@ -216,21 +207,25 @@ def main(
             stop_requested=stop_requested,
             resume_allowed=resume_allowed,
         ):
-            print("Stop requested during XY movement. Moving to home.")
-            _move_to_home(stage, home_position)
+            print("Stop requested during XY movement. Stopping sequence.")
             return
 
         if focus_reference_score is not None:
             if stop_requested is not None and stop_requested():
-                print("Stop requested before focus check. Moving to home.")
-                _move_to_home(stage, home_position)
+                print("Stop requested before focus check. Stopping sequence.")
                 return
 
             try:
                 current_focus_score = get_focus_score(die)
             except Exception as exc:
                 print(f"Focus score check failed for die {die}: {exc}. Moving to home.")
-                _move_to_home(stage, home_position)
+                move_to_position(
+                    stage,
+                    home_position,
+                    read_position=False,
+                    stop_requested=stop_requested,
+                    resume_allowed=resume_allowed,
+                )
                 return
 
             focus_threshold = abs(focus_reference_score) * focus_threshold_ratio
@@ -247,19 +242,40 @@ def main(
                     refocus_succeeded = refocus(die)
                 except Exception as exc:
                     print(f"Autofocus failed for die {die}: {exc}. Moving to home.")
-                    _move_to_home(stage, home_position)
+                    move_to_position(
+                        stage,
+                        home_position,
+                        read_position=False,
+                        stop_requested=stop_requested,
+                        resume_allowed=resume_allowed,
+                    )
                     return
 
                 if not refocus_succeeded:
+                    if stop_requested is not None and stop_requested():
+                        print("Stop requested during autofocus. Stopping sequence.")
+                        return
                     print("Autofocus failed or was cancelled. Moving to home.")
-                    _move_to_home(stage, home_position)
+                    move_to_position(
+                        stage,
+                        home_position,
+                        read_position=False,
+                        stop_requested=stop_requested,
+                        resume_allowed=resume_allowed,
+                    )
                     return
 
                 try:
                     focus_reference_score = get_focus_score(die)
                 except Exception as exc:
                     print(f"Focus reference update failed for die {die}: {exc}. Moving to home.")
-                    _move_to_home(stage, home_position)
+                    move_to_position(
+                        stage,
+                        home_position,
+                        read_position=False,
+                        stop_requested=stop_requested,
+                        resume_allowed=resume_allowed,
+                    )
                     return
                 print("Updated focus reference score:", f"{focus_reference_score:.2f}")
 
@@ -269,18 +285,25 @@ def main(
             stop_requested=stop_requested,
             resume_allowed=resume_allowed,
         ):
-            print("Stop requested during Z-down movement. Moving to home.")
-            _move_to_home(stage, home_position)
+            print("Stop requested during Z-down movement. Stopping sequence.")
             return
 
         if capture_el is not None:
             if stop_requested is not None and stop_requested():
-                print("Stop requested before EL capture. Moving to home.")
-                _move_to_home(stage, home_position)
+                print("Stop requested before EL capture. Stopping sequence.")
                 return
             if not capture_el(die):
+                if stop_requested is not None and stop_requested():
+                    print("Stop requested during EL capture. Stopping sequence.")
+                    return
                 print("EL capture failed or was cancelled. Moving to home.")
-                _move_to_home(stage, home_position)
+                move_to_position(
+                    stage,
+                    home_position,
+                    read_position=False,
+                    stop_requested=stop_requested,
+                    resume_allowed=resume_allowed,
+                )
                 return
 
         if not move_with_control(
@@ -289,21 +312,26 @@ def main(
             stop_requested=stop_requested,
             resume_allowed=resume_allowed,
         ):
-            print("Stop requested during Z-up movement. Moving to home.")
-            _move_to_home(stage, home_position)
+            print("Stop requested during Z-up movement. Stopping sequence.")
             return
 
         current_position = target_position
 
     print("Returning to home.")
-    _move_to_home(stage, home_position)
+    move_to_position(
+        stage,
+        home_position,
+        read_position=False,
+        stop_requested=stop_requested,
+        resume_allowed=resume_allowed,
+    )
     print("End position:", get_pos(stage, ["X", "Y", "Z"]))
 
 
 if __name__ == "__main__":
 
     stage1 = set_res_gpib("3")
-    move_to_origin(stage1)
+    move_to_position(stage1, {"X": "0", "Y": "0", "Z": "0"})
     try:
         home_position = get_pos(stage1, ["X", "Y", "Z"])
         main(

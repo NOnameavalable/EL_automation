@@ -134,7 +134,7 @@ The cleaned API should let higher-level code move the die stage using relative X
 ```python
 pulse = ["0", "10000"]
 move(inst, pulse)
-move_to_origin(inst)
+move_to_position(inst, {"X": "0", "Y": "0", "Z": "0"})
 ```
 
 Internally, `SSD220.py` converts signed pulse values into direction plus absolute pulse distance, then sends separate relative pulse commands for X and Y because the SSD220 command format is axis-specific.

@@ -410,43 +410,6 @@ def _run_poll_callback(poll_callback: Optional[Callable[[], None]]) -> None:
         pass
 
 
-def move_to_origin(
-    inst: MessageBasedResource,
-    axes: Optional[list[Axis]] = None,
-    fast_speed: Optional[dict[str, str]] = None,
-    low_speed: Optional[dict[str, str]] = None,
-    wait: bool = True,
-    reaction_time: float = 0.5,
-) -> Point:
-    """Move selected axes back to their startup origin.
-
-    Args:
-        inst: Open PyVISA instrument resource for the SSD220 controller.
-        axes: Axes to move back to zero. If omitted, all configured axes are
-            moved.
-        fast_speed: Optional fast speeds as an axis dictionary. If omitted,
-            `move()` uses its default speeds.
-        low_speed: Optional low/start speeds as an axis dictionary. If omitted,
-            `move()` uses its default speeds.
-        wait: If `True`, wait for each moved axis to finish before returning.
-        reaction_time: Extra seconds to wait after each moved axis reports
-            that motion is complete.
-
-    Returns:
-        Current positions for all configured axes.
-    """
-    axes = list(AXES) if axes is None else axes
-    return move_to_position(
-        inst,
-        {axis: "0" for axis in axes},
-        axes=axes,
-        fast_speed=fast_speed,
-        low_speed=low_speed,
-        wait=wait,
-        reaction_time=reaction_time,
-    )
-
-
 def move_to_position(
     inst: MessageBasedResource,
     target_position: Point,
@@ -456,6 +419,11 @@ def move_to_position(
     wait: bool = True,
     reaction_time: float = 0.5,
     read_position: bool = True,
+    stop_requested: Optional[Callable[[], bool]] = None,
+    resume_allowed: Optional[Event] = None,
+    stop_mode: str = "0",
+    poll_delay: float = 0.1,
+    poll_callback: Optional[Callable[[], None]] = None,
 ) -> Point:
     """Move selected axes to recorded controller-coordinate positions.
 
@@ -471,12 +439,19 @@ def move_to_position(
             that motion is complete.
         read_position: If `True`, query and return current positions after
             movement. If `False`, skip position readback.
+        stop_requested: Optional callback returning ``True`` when motion should
+            stop immediately.
+        resume_allowed: Optional event that is set while motion may continue.
+        stop_mode: SSD220 stop mode sent with ``AXI<axis>:STOP``.
+        poll_delay: Seconds to wait between motion-status checks.
+        poll_callback: Optional callback run during controlled movement polling.
 
     Returns:
         Current positions for all configured axes if `read_position` is `True`.
         Otherwise, an empty dictionary.
     """
     axes = list(target_position) if axes is None else axes
+    axes = (["Z"] if "Z" in axes else []) + [axis for axis in axes if axis != "Z"]
     current = get_pos(inst, axes)
     pulse_to_target = {
         axis: convert_axis_pulse(
@@ -485,6 +460,21 @@ def move_to_position(
         )
         for axis in axes
     }
+    if stop_requested is not None or resume_allowed is not None or poll_callback is not None:
+        move_with_control(
+            inst,
+            pulse_to_target,
+            fast_speed=fast_speed,
+            low_speed=low_speed,
+            stop_requested=stop_requested,
+            resume_allowed=resume_allowed,
+            stop_mode=stop_mode,
+            poll_delay=poll_delay,
+            reaction_time=reaction_time,
+            poll_callback=poll_callback,
+        )
+        return get_pos(inst) if read_position else {}
+
     return move(
         inst,
         pulse_to_target,

@@ -295,7 +295,7 @@ class StageGui(tk.Tk):
             text="Move Home",
             width=12,
             height=2,
-            command=self._move_to_home,
+            command=self._handle_move_home,
         )
         move_home_button.pack()
 
@@ -497,14 +497,13 @@ class StageGui(tk.Tk):
         self._log(f"Stopped {self._active_axis}")
         self._active_axis = None
 
-    def _move_to_home(self) -> None:
+    def _handle_move_home(self) -> None:
         """Move all configured axes back to the recorded home position."""
         try:
             stage_inst = self._get_stage_inst()
             move_to_position(
                 stage_inst,
                 self.home_position,
-                axes=list(AXES),
                 read_position=False,
             )
         except Exception as exc:
@@ -514,7 +513,7 @@ class StageGui(tk.Tk):
         self._log(f"Moving to home: {self.home_position}")
 
     def _request_stop(self) -> None:
-        """Request the automated Yelo sequence to move home and return."""
+        """Request the automated Yelo sequence to stop at the next safe point."""
         self._set_keithley_outputs_off()
         if not self._main_running:
             self._log("No main sequence is running")
@@ -523,7 +522,7 @@ class StageGui(tk.Tk):
         self._stop_requested.set()
         self._resume_allowed.set()
         self.pause_button.config(text="Pause")
-        self._log("Stop requested; sequence will move home at the next safe point")
+        self._log("Stop requested; sequence will stop at the next safe point")
 
     def _toggle_pause(self) -> None:
         """Pause or resume the automated Yelo sequence."""
@@ -629,7 +628,10 @@ class StageGui(tk.Tk):
             self.after(0, lambda: self._finish_yelo_main(f"Main error: {exc}"))
             return
 
-        self.after(0, lambda: self._finish_yelo_main("Main sequence finished"))
+        if self._stop_requested.is_set():
+            self.after(0, lambda: self._finish_yelo_main("Main sequence stopped"))
+        else:
+            self.after(0, lambda: self._finish_yelo_main("Main sequence finished"))
 
     def _finish_yelo_main(self, message: str) -> None:
         """Update GUI state after the Yelo main sequence exits."""
