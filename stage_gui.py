@@ -32,6 +32,7 @@ from SSD220 import (
     set_res_gpib,
 )
 from el_station import FOCUS_SCORE_THRESHOLD_RATIO, LucamStreamApp
+from YeloModuleImageCapture import DieLayout
 from YeloModuleImageCapture import main as run_yelo_main
 
 PAD_BACKGROUND = "#dedede"
@@ -233,6 +234,7 @@ class StageGui(tk.Tk):
         self._resume_allowed.set()
         self._focus_reference_score: Optional[float] = None
         self.home_position: dict[str, str] = {axis: "0" for axis in AXES}
+        self.die_positions: Optional[dict[str, dict[str, str]]] = None
         self._home_is_set = False
         self.contact_z: Optional[str] = None
         self.die_config_csv_path = tk.StringVar()
@@ -562,6 +564,9 @@ class StageGui(tk.Tk):
         if self.contact_z is None:
             self._log("Set Contact before starting")
             return
+        if self.die_positions is None:
+            self._log("Set Home before starting")
+            return
         if self.el_app is None:
             self._log("Open EL Station before starting")
             return
@@ -615,6 +620,7 @@ class StageGui(tk.Tk):
             run_yelo_main(
                 stage=stage_inst,
                 home_position=self.home_position,
+                die_positions=self.die_positions,
                 contact_z=self.contact_z,
                 capture_el=self._capture_el_for_die,
                 focus_reference_score=self._focus_reference_score,
@@ -867,6 +873,15 @@ class StageGui(tk.Tk):
         """Store the current stage location as the workflow home position."""
         try:
             self.home_position = get_pos(self._get_stage_inst())
+            die_layout = DieLayout(
+                dies_per_row=16,
+                dies_per_group=4,
+                die_spacing=9000,
+                group_gap=12500,
+                row_spacing=32500,
+                second_row_u_offset=5000,
+            )
+            self.die_positions = die_layout.die_positions()
         except Exception as exc:
             self._log(f"Set home error: {exc}")
             return

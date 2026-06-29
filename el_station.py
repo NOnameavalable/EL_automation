@@ -401,9 +401,10 @@ class LucamStreamApp:
                 )
                 self.master.update()
 
-                # The threshold is an uncertainty range: changes inside it are
-                # treated as insignificant in either direction.
-                if abs(score_delta) < score_threshold:
+                # The threshold is an uncertainty range when the peak is inside
+                # the scan window. Edge peaks may mean the real focus is still
+                # outside the sampled range, so keep searching in that case.
+                if not peak_near_edge and abs(score_delta) < score_threshold:
                     return center_position, center_score
 
                 next_step = MAX_FOCUS_STEP if peak_near_edge else max(MIN_FOCUS_STEP, step_size // 2)

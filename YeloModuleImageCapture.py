@@ -19,21 +19,28 @@ from SSD220 import set_res_gpib
 from pyvisa.resources import MessageBasedResource
 
 
-Point = list[str]
+Point = dict[str, str]
 
 # Use micrometers as the base unit because it is the smallest unit used by the
 # stage calibration, which avoids repeated unit conversion in movement code.
 X_UM_PER_PULSE = 0.05
 Y_UM_PER_PULSE = 10
+U_UM_PER_PULSE = 0.001
 DEFAULT_STANDALONE_Z_DOWN = 30000
+AXIS_UM_PER_PULSE = {
+    "X": X_UM_PER_PULSE,
+    "Y": Y_UM_PER_PULSE,
+    "U": U_UM_PER_PULSE,
+}
 
 
 @dataclass(frozen=True)
 class DieLayout:
     """Describe the physical die arrangement on the prober stage.
 
-    The layout uses die 1 as the reference position `[0, 0]`.
+    The layout uses die 1 as the reference position.
     X controls movement down between die rows, and Y controls movement along a row.
+    U applies the second-row positive offset.
     Dies are grouped along each row, with an extra gap after each group.
     The coordinate convention follows stepper motion, not the visual direction
     on the stage. Die 3 is physically left of die 1. To place die 3 under the
@@ -47,7 +54,7 @@ class DieLayout:
         die_spacing: Micrometer spacing between neighboring dies in the same group.
         group_gap: Extra micrometer spacing added between row groups.
         row_spacing: Micrometer spacing between the odd-die row and even-die row.
-        second_row_y_offset: One-time Y offset applied to every second-row
+        second_row_u_offset: One-time U offset applied to every second-row
             coordinate when transitioning from the first row.
     """
 
@@ -56,16 +63,17 @@ class DieLayout:
     die_spacing: int
     group_gap: int
     row_spacing: int
-    second_row_y_offset: int = 0
+    second_row_u_offset: int = 0
 
     def die_positions(self) -> dict[str, Point]:
         """Return die positions for the full layout.
 
-        Die `1` is the reference position `[0, 0]`. X controls the down
-        movement between rows, and Y controls movement along each row.
+        Die `1` is the reference position. X controls the down movement between
+        rows, Y controls movement along each row, and U carries the second-row
+        positive offset.
 
         Returns:
-            Dictionary mapping die number strings to `[x, y]` micrometer positions.
+            Dictionary mapping die number strings to axis micrometer positions.
         """
         positions = {}
         total_dies = self.dies_per_row * 2
@@ -79,10 +87,14 @@ class DieLayout:
             y = (
                 position_in_row * self.die_spacing
                 + group_index * self.group_gap
-                + row * self.second_row_y_offset
             )
+            u = row * self.second_row_u_offset
 
-            positions[str(die_number)] = [str(x), str(y)]
+            positions[str(die_number)] = {
+                "X": str(x),
+                "Y": str(y),
+                "U": str(u),
+            }
 
         return positions
 
@@ -115,20 +127,21 @@ def _um_to_pulse(distance_um: int, um_per_pulse: float) -> str:
 
 
 def _relative_pulse(current: Point, target: Point) -> dict[str, str]:
-    """Return the relative pulse move from one micrometer point to another.
+    """Return the relative pulse move from one micrometer position to another.
 
     Args:
-        current: Current `[x, y]` position in micrometers.
-        target: Target `[x, y]` position in micrometers.
+        current: Current axis positions in micrometers.
+        target: Target axis positions in micrometers.
 
     Returns:
-        Relative movement as `{"X": x_pulse, "Y": y_pulse}`.
+        Relative movement by axis in pulses.
     """
-    x_um = int(target[0]) - int(current[0])
-    y_um = int(target[1]) - int(current[1])
     return {
-        "X": _um_to_pulse(x_um, X_UM_PER_PULSE),
-        "Y": _um_to_pulse(y_um, Y_UM_PER_PULSE),
+        axis: _um_to_pulse(
+            int(target[axis]) - int(current[axis]),
+            AXIS_UM_PER_PULSE[axis],
+        )
+        for axis in target
     }
 
 
@@ -138,6 +151,7 @@ def _relative_pulse(current: Point, target: Point) -> dict[str, str]:
 def main(
     stage: MessageBasedResource,
     home_position: dict[str, str],
+    die_positions: dict[str, Point],
     contact_z: str,
     capture_el: Optional[Callable[[str], object]] = None,
     focus_reference_score: Optional[float] = None,
@@ -152,6 +166,7 @@ def main(
     Args:
         stage: Existing SSD220 instrument connection.
         home_position: Recorded workflow home position as `{"X": x, "Y": y}`.
+        die_positions: Die positions generated when workflow home was set.
         contact_z: Recorded Z contact position.
         capture_el: Optional callback called after Z moves down at each die.
         focus_reference_score: Optional starting focus score reference.
@@ -164,16 +179,7 @@ def main(
     Returns:
         None.
     """
-    layout = DieLayout(
-        dies_per_row=16,
-        dies_per_group=4,
-        die_spacing=9000,
-        group_gap=12500,
-        row_spacing=32500,
-        second_row_y_offset=-5000,
-    )
-    die_positions = layout.die_positions()
-    travel_order = die_travel_order(32)
+    travel_order = die_travel_order(len(die_positions))
     current_position = die_positions[travel_order[0]]
 
     div(stage, "X", "7")
@@ -337,6 +343,14 @@ if __name__ == "__main__":
         main(
             stage=stage1,
             home_position=home_position,
+            die_positions=DieLayout(
+                dies_per_row=16,
+                dies_per_group=4,
+                die_spacing=9000,
+                group_gap=12500,
+                row_spacing=32500,
+                second_row_u_offset=5000,
+            ).die_positions(),
             contact_z=str(int(home_position["Z"]) + DEFAULT_STANDALONE_Z_DOWN),
         )
     finally:
