@@ -1267,7 +1267,20 @@ class LucamStreamApp:
             self.update_status("Existing files kept; capture skipped", "orange")
             return True
 
-        original_exposure = self.exposure_var.get()
+        camera_property_names = (
+            "brightness",
+            "contrast",
+            "saturation",
+            "hue",
+            "gamma",
+            "exposure",
+            "gain",
+        )
+        original_camera_properties = {
+            name: self.lucam.GetProperty(name)
+            for name in camera_property_names
+        }
+        original_exposure = original_camera_properties["exposure"][0]
         initial_position = get_pos(self.motor, [EL_CAMERA_AXIS])[EL_CAMERA_AXIS]
         self.capture_in_progress = True
         camera_moved = False
@@ -1378,15 +1391,8 @@ class LucamStreamApp:
             try:
                 self.exposure_var.set(original_exposure)
                 self.set_exposure()
-                self.lucam.set_properties(
-                    brightness=1.0,
-                    contrast=1.0,
-                    saturation=1.0,
-                    hue=0.0,
-                    gamma=1.0,
-                    exposure=original_exposure,
-                    gain=1.0,
-                )
+                for name, (value, flags) in original_camera_properties.items():
+                    self.lucam.SetProperty(name, value, flags)
             except Exception as exc:
                 el_snapshot_ok = False
                 self.update_status(f"Failed to restore camera settings: {exc}", "red")
