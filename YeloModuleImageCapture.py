@@ -25,7 +25,7 @@ Point = dict[str, str]
 # stage calibration, which avoids repeated unit conversion in movement code.
 X_UM_PER_PULSE = 0.05
 Y_UM_PER_PULSE = 10
-U_UM_PER_PULSE = 0.001
+U_UM_PER_PULSE = 1.0
 V_UM_PER_PULSE = 0.45
 DEFAULT_STANDALONE_Z_DOWN = 30000
 AXIS_UM_PER_PULSE = {
@@ -42,8 +42,8 @@ class DieLayout:
 
     The layout uses die 1 as the reference position.
     X controls movement down between die rows, and Y controls movement along a row.
-    X and V apply the second-row die-upside-down offset. Y and U apply the
-    center offset on the second row.
+    X and V apply the second-row die-upside-down offset. U applies the original
+    second-row row correction. Y and U apply the center offset on the second row.
     Dies are grouped along each row, with an extra gap after each group.
     The coordinate convention follows stepper motion, not the visual direction
     on the stage. Die 3 is physically left of die 1. To place die 3 under the
@@ -59,6 +59,8 @@ class DieLayout:
         row_spacing: Micrometer spacing between the odd-die row and even-die row.
         second_row_die_upside_down_offset: One-time X/V offset applied to every
             second-row coordinate.
+        second_row_u_row_offset: One-time U row correction applied to every
+            second-row coordinate.
         second_row_center_offset: One-time Y/U center offset applied to every
             second-row coordinate.
     """
@@ -69,6 +71,7 @@ class DieLayout:
     group_gap: int
     row_spacing: int
     second_row_die_upside_down_offset: int = 0
+    second_row_u_row_offset: int = 0
     second_row_center_offset: int = 0
 
     def die_positions(self) -> dict[str, Point]:
@@ -76,7 +79,8 @@ class DieLayout:
 
         Die `1` is the reference position. X controls the down movement between
         rows, Y controls movement along each row, X/V carry the die-upside-down
-        second-row offset, and Y/U carry the second-row center offset.
+        second-row offset, U carries the row correction, and Y/U carry the
+        second-row center offset.
 
         Returns:
             Dictionary mapping die number strings to axis micrometer positions.
@@ -95,7 +99,7 @@ class DieLayout:
                 + group_index * self.group_gap
                 + row * self.second_row_center_offset
             )
-            u = row * self.second_row_center_offset
+            u = row * (self.second_row_u_row_offset + self.second_row_center_offset)
             v = row * self.second_row_die_upside_down_offset
 
             positions[str(die_number)] = {
@@ -359,6 +363,7 @@ if __name__ == "__main__":
                 group_gap=12500,
                 row_spacing=32500,
                 second_row_die_upside_down_offset=5000,
+                second_row_u_row_offset=5000,
                 second_row_center_offset=250,
             ).die_positions(),
             contact_z=str(int(home_position["Z"]) + DEFAULT_STANDALONE_Z_DOWN),

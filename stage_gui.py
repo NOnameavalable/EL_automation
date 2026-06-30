@@ -880,6 +880,7 @@ class StageGui(tk.Tk):
                 group_gap=12500,
                 row_spacing=32500,
                 second_row_die_upside_down_offset=5000,
+                second_row_u_row_offset=5000,
                 second_row_center_offset=250,
             )
             self.die_positions = die_layout.die_positions()
