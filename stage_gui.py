@@ -5,7 +5,7 @@ will be connected after the GUI layout is agreed on.
 """
 
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 import threading
 from collections.abc import Callable
 from typing import Literal, Optional
@@ -32,7 +32,7 @@ from SSD220 import (
     set_res_gpib,
 )
 from el_station import FOCUS_SCORE_THRESHOLD_RATIO, LucamStreamApp
-from YeloModuleImageCapture import DieLayout
+from YeloModuleImageCapture import DieLayout, die_travel_order
 from YeloModuleImageCapture import main as run_yelo_main
 
 PAD_BACKGROUND = "#dedede"
@@ -338,8 +338,20 @@ class StageGui(tk.Tk):
         stop_button.grid(row=2, column=3, pady=(12, 0), padx=(6, 0))
 
         """================ Die Config CSV Set ================"""
+        start_die_frame = tk.Frame(pad_frame, bg=WINDOW_BACKGROUND)
+        start_die_frame.grid(row=3, column=0, columnspan=4, pady=(10, 0))
+        tk.Label(start_die_frame, text="Starting Die:", bg=WINDOW_BACKGROUND).pack(
+            side=tk.LEFT
+        )
+        self.start_die_combobox = ttk.Combobox(
+            start_die_frame,
+            width=8,
+            state="disabled",
+        )
+        self.start_die_combobox.pack(side=tk.LEFT, padx=5)
+
         csv_frame = tk.Frame(pad_frame, bg=WINDOW_BACKGROUND)
-        csv_frame.grid(row=3, column=0, columnspan=4, pady=(10, 0), sticky="ew")
+        csv_frame.grid(row=4, column=0, columnspan=4, pady=(10, 0), sticky="ew")
 
         tk.Label(csv_frame, text="Die Config CSV:", bg=WINDOW_BACKGROUND).pack(side=tk.LEFT)
         tk.Entry(csv_frame, textvariable=self.die_config_csv_path, width=58).pack(side=tk.LEFT, padx=5)
@@ -347,7 +359,7 @@ class StageGui(tk.Tk):
 
         """================ Keithley Current Set ================"""
         keithley_frame = tk.Frame(pad_frame, bg=WINDOW_BACKGROUND)
-        keithley_frame.grid(row=4, column=0, columnspan=4, pady=(10, 0))
+        keithley_frame.grid(row=5, column=0, columnspan=4, pady=(10, 0))
 
         tk.Label(keithley_frame, text="Light current (mA):", bg=WINDOW_BACKGROUND).pack(side=tk.LEFT)
         tk.Entry(keithley_frame, textvariable=self.light_current_ma, width=9).pack(side=tk.LEFT, padx=5)
@@ -365,7 +377,7 @@ class StageGui(tk.Tk):
         ).pack(side=tk.LEFT)
 
         output_frame = tk.Frame(pad_frame, bg=WINDOW_BACKGROUND)
-        output_frame.grid(row=5, column=0, columnspan=4, pady=(8, 0))
+        output_frame.grid(row=6, column=0, columnspan=4, pady=(8, 0))
         self.light_output_button = tk.Button(
             output_frame,
             text="Light Output: OFF",
@@ -567,6 +579,9 @@ class StageGui(tk.Tk):
         if self.die_positions is None:
             self._log("Set Home before starting")
             return
+        if not self.die_config:
+            self._log("Die configuration CSV is empty; load a valid CSV before starting")
+            return
         if self.el_app is None:
             self._log("Open EL Station before starting")
             return
@@ -596,12 +611,20 @@ class StageGui(tk.Tk):
         self._main_running = True
         self.light_output_button.config(state=tk.DISABLED)
         self.probe_output_button.config(state=tk.DISABLED)
-        if not self.die_config:
-            self._log("Starting main sequence without die configuration CSV")
-        self._log("Starting main sequence...")
-        threading.Thread(target=self._run_yelo_main, daemon=True).start()
+        die_config = dict(self.die_config)
+        start_die = self.start_die_combobox.get()
+        self._log(f"Starting main sequence at die {start_die}...")
+        threading.Thread(
+            target=self._run_yelo_main,
+            args=(die_config, start_die),
+            daemon=True,
+        ).start()
 
-    def _run_yelo_main(self) -> None:
+    def _run_yelo_main(
+        self,
+        die_config: dict[str, tuple[str, str]],
+        start_die: str,
+    ) -> None:
         """Run Yelo main in a background thread so Tk stays responsive."""
         try:
             stage_inst = self._get_stage_inst()
@@ -622,7 +645,9 @@ class StageGui(tk.Tk):
                 home_position=self.home_position,
                 die_positions=self.die_positions,
                 contact_z=self.contact_z,
-                capture_el=self._capture_el_for_die,
+                capture_el=lambda die: self._capture_el_for_die(die, die_config),
+                die_config=die_config,
+                start_die=start_die,
                 focus_reference_score=self._focus_reference_score,
                 get_focus_score=self._get_focus_score_for_die,
                 refocus=self._refocus_for_die,
@@ -666,7 +691,11 @@ class StageGui(tk.Tk):
 
         self._log(f"Focus checked. Reference score: {self._focus_reference_score:.2f}")
 
-    def _capture_el_for_die(self, die: str) -> object:
+    def _capture_el_for_die(
+        self,
+        die: str,
+        die_config: dict[str, tuple[str, str]],
+    ) -> object:
         """Run EL capture on Tk's main thread and wait for it to finish."""
         done = threading.Event()
         result: dict[str, object] = {}
@@ -678,13 +707,7 @@ class StageGui(tk.Tk):
 
                 self._set_probe_polarity_for_die(die)
 
-                die_info = self.die_config.get(die)
-                if die_info is None:
-                    self._log(f"No CSV configuration found for die {die}; skipping die")
-                    result["value"] = True
-                    return
-
-                full_id, notes = die_info
+                full_id, notes = die_config[die]
                 try:
                     design, lot, wafer, device_id = full_id.split("_")
                 except ValueError:
@@ -830,6 +853,9 @@ class StageGui(tk.Tk):
             return
 
         self.die_config_csv_path.set(csv_path)
+        options = die_travel_order(DIE_CONFIG_DATA_ROWS * 2, self.die_config)
+        self.start_die_combobox.configure(values=options, state="readonly")
+        self.start_die_combobox.current(0)
         self._log(f"Loaded die config CSV with {len(self.die_config)} die entries")
 
     def _read_die_config_csv(self, csv_path: str) -> dict[str, tuple[str, str]]:

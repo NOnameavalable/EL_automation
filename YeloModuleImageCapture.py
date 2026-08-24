@@ -6,7 +6,7 @@ Created on Thu Nov 28 15:54:42 2024
 """
 
 from dataclasses import dataclass
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import time
 from threading import Event
 from typing import Optional
@@ -112,18 +112,38 @@ class DieLayout:
         return positions
 
 
-def die_travel_order(die_count: int) -> list[str]:
-    """Return die travel order as odds first, then evens.
+def die_travel_order(
+    die_count: int,
+    die_config: Optional[Mapping[str, object]] = None,
+    start_die: Optional[str] = None,
+) -> list[str]:
+    """Return configured dies in travel order, optionally beginning at one die.
 
     Args:
         die_count: Total number of dies in the layout.
+        die_config: Optional mapping of configured die IDs. Dies absent from the
+            mapping are excluded from the returned order.
+        start_die: Optional configured die ID where the returned order begins.
+            Earlier dies are excluded and the order does not wrap.
 
     Returns:
         Die numbers as strings ordered like `1, 3, ..., 31, 2, 4, ..., 32`.
     """
     odd_dies = [str(die) for die in range(1, die_count + 1, 2)]
     even_dies = [str(die) for die in range(2, die_count + 1, 2)]
-    return odd_dies + even_dies[::-1]
+    travel_order = odd_dies + even_dies[::-1]
+
+    if die_config is not None:
+        travel_order = [die for die in travel_order if die in die_config]
+
+    if start_die is not None:
+        if start_die not in travel_order:
+            raise ValueError(
+                f"Starting die {start_die} is not configured or not in the layout"
+            )
+        travel_order = travel_order[travel_order.index(start_die):]
+
+    return travel_order
 
 
 def _um_to_pulse(distance_um: int, um_per_pulse: float) -> str:
@@ -167,6 +187,8 @@ def main(
     die_positions: dict[str, Point],
     contact_z: str,
     capture_el: Optional[Callable[[str], object]] = None,
+    die_config: Optional[Mapping[str, object]] = None,
+    start_die: Optional[str] = None,
     focus_reference_score: Optional[float] = None,
     get_focus_score: Optional[Callable[[str], float]] = None,
     refocus: Optional[Callable[[str], bool]] = None,
@@ -182,6 +204,12 @@ def main(
         die_positions: Die positions generated when workflow home was set.
         contact_z: Recorded Z contact position.
         capture_el: Optional callback called after Z moves down at each die.
+        die_config: Optional snapshot mapping of die ID strings to CSV configuration
+            entries. Dies absent from the mapping are excluded from the travel order.
+            When omitted, all dies are processed for backward compatibility.
+        start_die: Optional configured die ID where processing begins. Dies earlier
+            in the normal travel order are not visited. When omitted, processing
+            begins from the start of the normal travel order.
         focus_reference_score: Optional starting focus score reference.
         get_focus_score: Optional callback returning the current focus score.
         refocus: Optional callback that runs autofocus and returns success.
@@ -192,8 +220,12 @@ def main(
     Returns:
         None.
     """
-    travel_order = die_travel_order(len(die_positions))
-    current_position = die_positions[travel_order[0]]
+    current_position = die_positions["1"]
+    travel_order = die_travel_order(
+        len(die_positions),
+        die_config,
+        start_die,
+    )
 
     div(stage, "X", "7")
     div(stage, "Y", "7")

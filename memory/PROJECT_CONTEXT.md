@@ -34,18 +34,22 @@ source meter output during the main probing sequence.
 1. Operator sets Home.
 2. `stage_gui.py` records `home_position` and builds `DieLayout` positions.
 3. Operator sets Contact Z.
-4. Operator opens EL Station.
-5. Operator checks focus; the current focus score becomes the reference score.
-6. Operator applies light and probe current levels.
-7. Starting the main sequence turns the light output on and prepares probe
+4. Operator loads a non-empty die configuration CSV.
+5. Operator may select a configured starting die; the first available die is
+   selected automatically.
+6. Operator opens EL Station.
+7. Operator checks focus; the current focus score becomes the reference score.
+8. Operator applies light and probe current levels.
+9. Starting the main sequence turns the light output on and prepares probe
    current.
-8. `_run_yelo_main()` lifts Z back to Home Z, then calls
+10. `_run_yelo_main()` lifts Z back to Home Z, then calls
    `YeloModuleImageCapture.main()`.
-9. For each die, the main sequence moves XYUV, checks focus score against the
-   reference, optionally refocuses, moves Z down to contact, captures EL, then
-   moves Z back up.
-10. Stop only stops the running work. It does not automatically move home.
-11. End/error cleanup disables Keithley outputs and restores GUI controls.
+11. For each configured die at or after the selected starting die, the main
+   sequence moves XYUV, checks focus score
+   against the reference, optionally refocuses, moves Z down to contact,
+   captures EL, then moves Z back up.
+12. Stop only stops the running work. It does not automatically move home.
+13. End/error cleanup disables Keithley outputs and restores GUI controls.
 
 ## Die Layout And Calibration
 

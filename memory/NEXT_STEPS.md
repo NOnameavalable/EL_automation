@@ -16,6 +16,9 @@
 
 ## Possible Implementation Tasks
 
+- Refactor motor access behind the centralized pause/stop stage-control layer
+  described in `memory/DECISIONS.md`, removing repeated control callbacks from
+  Yelo movement call sites.
 - Add focused tests or a lightweight verification script for `DieLayout` output
   without importing hardware modules.
 - Consider isolating pure layout/calibration code from hardware imports so

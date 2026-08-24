@@ -7,8 +7,9 @@
 
 ## Workflow Rules
 
-- Do not start the main sequence unless Home, Contact Z, EL Station, focus
-  reference, both Keithleys, and both current levels are ready.
+- Do not start the main sequence unless Home, Contact Z, a non-empty die
+  configuration CSV, EL Station, focus reference, both Keithleys, and both
+  current levels are ready.
 - The image must already be in focus before the main sequence starts.
 - Starting the main sequence must turn the light output on; do not turn it off
   before calling the main sequence.
@@ -29,6 +30,10 @@
   Keithley implementation details.
 - Die layout positions are micrometer coordinates until converted by axis
   calibration.
+- `die_travel_order()` must exclude dies absent from the die configuration
+  before movement, focus checking, contact, polarity changes, or capture.
+- A selected starting die must truncate the configured travel order without
+  wrapping to earlier dies.
 - Preserve current second-row layout behavior unless intentionally changing
   alignment:
   - X/V use `second_row_die_upside_down_offset`.

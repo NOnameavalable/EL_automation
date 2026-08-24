@@ -68,6 +68,29 @@ Implications:
 - The resulting die-position dictionary is passed into
   `YeloModuleImageCapture.main()`.
 
+## Skip Unconfigured Dies In Yelo
+
+Reason: Missing CSV entries identify dies that should not be probed, so the
+movement sequencer must skip them before any hardware action.
+
+Implications:
+- `stage_gui.py` passes a snapshot of the die configuration into Yelo.
+- `die_travel_order()` excludes dies absent from the configuration before Yelo
+  begins movement.
+- EL capture receives only configured dies.
+
+## Select A Starting Die In Travel Order
+
+Reason: Operators may need to resume a run from a later configured die without
+visiting earlier dies.
+
+Implications:
+- The Starting Die selector lists configured IDs in Yelo travel order and
+  defaults to the first available die after CSV loading.
+- Selecting a die truncates the run before that die; the order does not wrap.
+- Starting-die selection and configured-die filtering both belong in
+  `die_travel_order()`.
+
 ## Use Micrometers As Layout Units
 
 Reason: Layout dimensions are easier to reason about as physical distances, then
@@ -97,3 +120,21 @@ Implications:
 - U uses `1.0 um/pulse`, meaning `10000 pulses = 10 mm`.
 - V uses `0.4 um/pulse`, meaning `10000 pulses = 4 mm`.
 - The V `5000 um` offset converts to `12500 pulses`.
+
+## Future Direction: Centralize Pause And Stop Control
+
+Reason: Passing `stop_requested` and `resume_allowed` through every movement
+call makes Yelo and other workflows unnecessarily repetitive.
+
+Planned implications:
+- Introduce one stage-control layer that owns the VISA connection, active axis,
+  target position, pause state, stop state, and motion polling.
+- Expose simple relative-move, move-to-position, pause, resume, and stop methods.
+- Keep controller motion checks and `AXI<axis>:STOP` handling inside that layer.
+- On Pause, stop the active axis and continue the remaining distance on Resume.
+- On Stop, stop active motion and cancel remaining sequence work without moving
+  Home automatically.
+- Route Yelo movement and EL camera W-axis movement through the same layer.
+- Keep sequence checkpoints for non-motor operations and retain guaranteed
+  Keithley/camera cleanup; blocking camera or VISA calls remain cooperative.
+- Do not forcibly kill Python threads, because cleanup must complete safely.
