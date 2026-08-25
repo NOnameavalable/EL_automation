@@ -945,11 +945,14 @@ class StageGui(tk.Tk):
 
     def _initialize_keithleys(self) -> None:
         """Connect and safely configure both Keithley current sources."""
+        print("connecting resources")
         try:
+            print("1")
             light_keithley = set_res_gpib(
                 LIGHT_KEITHLEY_ADDRESS,
                 bus=KEITHLEY_GPIB_BUS,
             )
+            print("2")
             setup_keithley(
                 light_keithley,
                 LIGHT_COMPLIANCE_V,

@@ -260,6 +260,8 @@ def main(
         ):
             print("Stop requested during XY movement. Stopping sequence.")
             return
+        
+        time.sleep(0.25)
 
         if focus_reference_score is not None:
             if stop_requested is not None and stop_requested():

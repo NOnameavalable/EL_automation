@@ -81,6 +81,7 @@ def set_res_gpib(address: str, bus: str = "0") -> MessageBasedResource:
         TypeError: If the opened resource does not support message commands.
     """
     rm = pyvisa.ResourceManager()
+    print(rm)
     resource_name = f"GPIB{bus}::{address}::INSTR"
     resources = rm.list_resources()
 
@@ -335,6 +336,7 @@ def _move_axis_with_control(
     target_position = int(_get_axis_pos(inst, axis).strip()) + int(controller_pulse)
 
     while True:
+        time.sleep(0.25)
         current_position = int(_get_axis_pos(inst, axis).strip())
         remaining_pulse = target_position - current_position
         if remaining_pulse == 0:
