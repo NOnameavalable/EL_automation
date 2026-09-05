@@ -522,7 +522,7 @@ class StageGui(tk.Tk):
         self._active_axis = None
 
     def _handle_move_position(self) -> None:
-        """Move to Home or directly to a configured die at Home Z."""
+        """Move to Home, Contact Z, or directly to a configured die."""
         if self._main_running:
             self._log("Cannot move while the main sequence is running")
             return
@@ -544,6 +544,23 @@ class StageGui(tk.Tk):
             self._log(f"Moving to home: {self.home_position}")
             return
 
+        if destination == "Contact":
+            if self.contact_z is None:
+                self._log("Set Contact before moving to Contact")
+                return
+
+            try:
+                move_to_position(
+                    self._get_stage_inst(),
+                    {"Z": self.contact_z},
+                    read_position=False,
+                )
+            except Exception as exc:
+                self._log(f"Move to contact error: {exc}")
+                return
+            self._log(f"Moved to Contact Z: {self.contact_z}")
+            return
+
         if (
             not destination
             or destination not in self.die_config
@@ -555,11 +572,6 @@ class StageGui(tk.Tk):
 
         try:
             stage_inst = self._get_stage_inst()
-            move_to_position(
-                stage_inst,
-                {"Z": self.home_position["Z"]},
-                read_position=False,
-            )
             pulse = _relative_pulse(
                 stage_inst,
                 self.home_position,
@@ -572,7 +584,7 @@ class StageGui(tk.Tk):
             self._log(f"Move to die {destination} error: {exc}")
             return
 
-        self._log(f"Moved to die {destination} at Home Z")
+        self._log(f"Moved to die {destination}")
 
     def _request_stop(self) -> None:
         """Request the automated Yelo sequence to stop at the next safe point."""
@@ -904,15 +916,7 @@ class StageGui(tk.Tk):
         options = die_travel_order(DIE_CONFIG_DATA_ROWS * 2, self.die_config)
         self.start_die_combobox.configure(values=options, state="readonly")
         self.start_die_combobox.current(0)
-        move_destinations = ["Home", *options] if self._home_is_set else options
-        self.move_destination_combobox.configure(
-            values=move_destinations,
-            state="readonly" if self._home_is_set else "disabled",
-        )
-        self.move_destination_combobox.set("Home" if self._home_is_set else "")
-        self.move_position_button.configure(
-            state=tk.NORMAL if self._home_is_set else tk.DISABLED,
-        )
+        self._refresh_move_destinations()
         self._log(f"Loaded die config CSV with {len(self.die_config)} die entries")
 
     def _read_die_config_csv(self, csv_path: str) -> dict[str, tuple[str, str]]:
@@ -952,6 +956,32 @@ class StageGui(tk.Tk):
         self._speed_slider_value = int(value)
         self._log(f"Speed: {value}")
 
+    def _refresh_move_destinations(self) -> None:
+        """Update manual move choices to match the recorded workflow positions."""
+        options = (
+            die_travel_order(DIE_CONFIG_DATA_ROWS * 2, self.die_config)
+            if self.die_config
+            else []
+        )
+
+        if not self._home_is_set:
+            self.move_destination_combobox.configure(values=options, state="disabled")
+            self.move_destination_combobox.set("")
+            self.move_position_button.configure(state=tk.DISABLED)
+            return
+
+        destinations = ["Home"]
+        if self.contact_z is not None:
+            destinations.append("Contact")
+        destinations.extend(options)
+
+        current_destination = self.move_destination_combobox.get()
+        self.move_destination_combobox.configure(values=destinations, state="readonly")
+        self.move_destination_combobox.set(
+            current_destination if current_destination in destinations else "Home"
+        )
+        self.move_position_button.configure(state=tk.NORMAL)
+
     def _set_home(self) -> None:
         """Store the current stage location as the workflow home position."""
         try:
@@ -974,14 +1004,7 @@ class StageGui(tk.Tk):
         self._home_is_set = True
         self.contact_z = None
         self._focus_reference_score = None
-        options = (
-            die_travel_order(DIE_CONFIG_DATA_ROWS * 2, self.die_config)
-            if self.die_config
-            else []
-        )
-        self.move_destination_combobox.configure(values=["Home", *options], state="readonly")
-        self.move_destination_combobox.set("Home")
-        self.move_position_button.configure(state=tk.NORMAL)
+        self._refresh_move_destinations()
         self._log(f"Home set: {self.home_position}")
 
     def _set_contact(self) -> None:
@@ -997,6 +1020,7 @@ class StageGui(tk.Tk):
             return
 
         self._focus_reference_score = None
+        self._refresh_move_destinations()
         self._log(f"Contact Z set: {self.contact_z}")
 
     def _get_stage_inst(self) -> MessageBasedResource:

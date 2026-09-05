@@ -109,8 +109,8 @@ enabled.
 
 ### TODO
 
-- [ ] Add a `Contact` destination to the move combobox after Contact has been set.
-- [ ] Modify the `move_to_position()` axis-ordering logic.
+- [x] Add a `Contact` destination to the move combobox after Contact has been set.
+- [x] Modify the `move_to_position()` axis-ordering logic.
 - [ ] Check the polarity of the probes.
 - [ ] Check the exported file name.
 - [ ] Skip a die during the sequence when the probe is not in contact with that die.
@@ -190,6 +190,12 @@ probe position, while a smaller controller Z position represents a higher,
 more retracted position. The standalone fallback reflects this convention by
 setting contact Z to `home Z + 30000`. This is the opposite sign from logical
 relative Z movement: logical `+Z` moves up and logical `-Z` moves down.
+
+`move_to_position()` uses that controller-coordinate convention to order a
+multi-axis move safely. If the target Z is smaller than the current Z, it moves
+Z first to retract the probe before moving the other axes. If the target Z is
+larger than or equal to the current Z, it moves the other axes first and Z last
+so the probe is not lowered until the lateral movement is complete.
 
 ### Manual Move Destination
 

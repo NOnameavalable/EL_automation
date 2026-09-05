@@ -452,9 +452,14 @@ def move_to_position(
         Current positions for all configured axes if `read_position` is `True`.
         Otherwise, an empty dictionary.
     """
-    axes = list(target_position) if axes is None else axes
-    axes = (["Z"] if "Z" in axes else []) + [axis for axis in axes if axis != "Z"]
+    axes = list(target_position) if axes is None else list(axes)
     current = get_pos(inst, axes)
+    if "Z" in axes:
+        non_z_axes = [axis for axis in axes if axis != "Z"]
+        if int(target_position["Z"]) < int(current["Z"]):
+            axes = ["Z", *non_z_axes]
+        else:
+            axes = [*non_z_axes, "Z"]
     pulse_to_target = {
         axis: convert_axis_pulse(
             axis,
