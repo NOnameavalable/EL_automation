@@ -88,12 +88,17 @@ die_2 = [x_offset, y_offset]
 die_3 = [x_offset, y_offset]
 ```
 
-When the sequence advances to the second die row, apply an additional
-`Y +5 mm` offset exactly once during the row transition, not once per die.
-On this machine, positive Y is the physical rightward direction for this row
-transition. After the one-time offset, continue with the normal within-row die
-spacing. Convert the 5 mm distance to controller pulses using the calibrated
-Y-axis pulse-to-distance value.
+The second die row uses coordinated offsets on four axes rather than a single
+Y offset. Each generated second-row die position includes:
+
+- X: `row_spacing + second_row_die_upside_down_offset`.
+- Y: the normal within-row position plus `second_row_center_offset`.
+- U: `second_row_u_row_offset + second_row_center_offset`.
+- V: `second_row_die_upside_down_offset`.
+
+With the current GUI configuration, those additional second-row coordinates
+are X `+37500 um`, Y `+250 um`, U `+5250 um`, and V `+5000 um`. Normal die
+spacing and group gaps continue to determine the position along each row.
 
 The wafer-probe current direction must also reverse for the second row. Keep
 the physical HI/LO wiring fixed and represent the reversal with the sign of the
@@ -104,14 +109,11 @@ enabled.
 
 ### TODO
 
-- [ ] 3D print camera stander.
-- [ ] Test if the stage moves linearly.
-- [ ] Buy auto light controller.
-- [ ] Set up the devices.
-- [ ] Configure the probe Keithley GPIB address and hardware-test both Keithley connections and output sequences.
-- [ ] Optimize the functions on the GUI.
-- [ ] Clean `el_station.py`.
-- [ ] Make the EL Station window open quickly by showing the GUI first, then initializing the motor/camera asynchronously or after the window appears with a connection status message.
+- [ ] Add a `Contact` destination to the move combobox after Contact has been set.
+- [ ] Modify the `move_to_position()` axis-ordering logic.
+- [ ] Check the polarity of the probes.
+- [ ] Check the exported file name.
+- [ ] Skip a die during the sequence when the probe is not in contact with that die.
 
 ### Interruptible Movement Idea
 
@@ -129,15 +131,75 @@ This would move the control logic into one helper, such as `move_with_control(..
 
 ### Current SSD220 Direction
 
-The cleaned API should let higher-level code move the die stage using relative X/Y pulse distances:
+The application uses two coordinate conventions. Keep them distinct when
+calculating movement or comparing recorded positions.
+
+The workflow also uses two measurement units:
+
+- `DieLayout.die_positions()` contains logical layout coordinates in
+  micrometers relative to die 1. These values are neither pulse counts nor
+  controller positions. Axis calibration is applied later when the difference
+  between two die positions is converted into logical relative pulses.
+- `move()` and `move_with_control()` accept logical relative pulse counts.
+- `get_pos()` and `move_to_position()` use absolute controller counter values,
+  which the current application treats as pulse coordinates.
+
+The D220/SSD220 controller can be configured to report positions in other
+units. The code currently assumes pulse units but does not set or verify the
+controller's `UNIT` configuration, so that hardware setting must remain in
+pulse mode or be explicitly validated during controller initialization.
+
+#### Logical relative movement
+
+`move()` and `move_with_control()` accept signed logical pulse distances. The
+application defines positive movement as right for X/V/W and up for Y/Z/U. In
+particular, positive logical Z retracts the probe upward, while negative logical
+Z lowers it toward contact.
 
 ```python
-pulse = ["0", "10000"]
-move(inst, pulse)
-move_to_position(inst, {"X": "0", "Y": "0", "Z": "0"})
+move(inst, {"X": "1000", "Z": "-30000"})
 ```
 
-Internally, `SSD220.py` converts signed pulse values into direction plus absolute pulse distance, then sends separate relative pulse commands for X and Y because the SSD220 command format is axis-specific.
+`POSITIVE_DIRECTION_BY_AXIS` maps logical positive movement to a controller
+direction. All currently configured axes map logical positive to `CCW`, so
+`convert_axis_pulse()` reverses the sign for every axis. The low-level command
+then sends a positive controller pulse as `GO CW` and a negative controller
+pulse as `GO CCW`.
+
+#### Controller absolute positions
+
+`get_pos()` returns the controller's unconverted `POS?` counter values.
+Recorded `home_position` and `contact_z` values therefore use controller
+coordinates, and `move_to_position()` accepts targets in that same convention.
+It converts the difference between the target and current controller positions
+into logical relative movement before calling the movement API.
+
+High-level functions that expose or retain controller absolute positions are:
+
+- `get_pos()` returns controller positions directly.
+- `move_to_position()` accepts controller-coordinate targets.
+- `YeloModuleImageCapture.main()` receives `home_position` and `contact_z` in
+  controller coordinates. Its `die_positions` argument instead contains layout
+  coordinates in micrometers.
+- `LucamStreamApp.find_focus_adaptive()` records focus positions from
+  `get_pos()`, calculates target differences in controller coordinates, and
+  converts each difference into a logical pulse before moving the focus axis.
+
+For the current Z workflow, a larger controller Z position represents a lower
+probe position, while a smaller controller Z position represents a higher,
+more retracted position. The standalone fallback reflects this convention by
+setting contact Z to `home Z + 30000`. This is the opposite sign from logical
+relative Z movement: logical `+Z` moves up and logical `-Z` moves down.
+
+### Manual Move Destination
+
+After `Set Home`, the stage GUI enables a destination combobox and Move button.
+The destination list contains `Home` and the dies present in the loaded CSV.
+Selecting `Home` moves to the recorded controller Home position. Selecting a
+die first returns Z to Home Z, then `_relative_pulse()` reads the current
+X/Y/U/V controller positions and calculates the direct logical pulse movement
+to that die's logical micrometer position. A manual die move remains retracted
+at Home Z; it does not establish probe contact.
 
 ### SSD220 Speed Table Convention
 

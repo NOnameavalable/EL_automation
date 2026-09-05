@@ -27,12 +27,13 @@ from SSD220 import (
     convert_axis_pulse,
     get_pos,
     move,
+    move_with_control,
     move_to_position,
     set_all_axes_speed_table,
     set_res_gpib,
 )
 from el_station import FOCUS_SCORE_THRESHOLD_RATIO, LucamStreamApp
-from YeloModuleImageCapture import DieLayout, die_travel_order
+from YeloModuleImageCapture import DieLayout, _relative_pulse, die_travel_order
 from YeloModuleImageCapture import main as run_yelo_main
 
 PAD_BACKGROUND = "#dedede"
@@ -292,14 +293,23 @@ class StageGui(tk.Tk):
         )
         check_focus_button.pack(pady=(0, 8))
 
-        move_home_button = tk.Button(
-            setup_frame,
-            text="Move Home",
-            width=12,
-            height=2,
-            command=self._handle_move_home,
+        move_target_frame = tk.Frame(setup_frame, bg=WINDOW_BACKGROUND)
+        move_target_frame.pack()
+        self.move_destination_combobox = ttk.Combobox(
+            move_target_frame,
+            width=8,
+            state="disabled",
         )
-        move_home_button.pack()
+        self.move_destination_combobox.pack(side=tk.LEFT, padx=(0, 4))
+        self.move_position_button = tk.Button(
+            move_target_frame,
+            text="Move",
+            width=7,
+            height=2,
+            state=tk.DISABLED,
+            command=self._handle_move_position,
+        )
+        self.move_position_button.pack(side=tk.LEFT)
 
         open_el_button = tk.Button(
             setup_frame,
@@ -339,7 +349,7 @@ class StageGui(tk.Tk):
 
         """================ Die Config CSV Set ================"""
         start_die_frame = tk.Frame(pad_frame, bg=WINDOW_BACKGROUND)
-        start_die_frame.grid(row=3, column=0, columnspan=4, pady=(10, 0))
+        start_die_frame.grid(row=3, column=0, columnspan=4, pady=(10, 0), sticky = 'w')
         tk.Label(start_die_frame, text="Starting Die:", bg=WINDOW_BACKGROUND).pack(
             side=tk.LEFT
         )
@@ -511,20 +521,58 @@ class StageGui(tk.Tk):
         self._log(f"Stopped {self._active_axis}")
         self._active_axis = None
 
-    def _handle_move_home(self) -> None:
-        """Move all configured axes back to the recorded home position."""
+    def _handle_move_position(self) -> None:
+        """Move to Home or directly to a configured die at Home Z."""
+        if self._main_running:
+            self._log("Cannot move while the main sequence is running")
+            return
+        if not self._home_is_set:
+            self._log("Set Home before moving")
+            return
+
+        destination = self.move_destination_combobox.get()
+        if destination == "Home":
+            try:
+                move_to_position(
+                    self._get_stage_inst(),
+                    self.home_position,
+                    read_position=False,
+                )
+            except Exception as exc:
+                self._log(f"Move home error: {exc}")
+                return
+            self._log(f"Moving to home: {self.home_position}")
+            return
+
+        if (
+            not destination
+            or destination not in self.die_config
+            or self.die_positions is None
+            or destination not in self.die_positions
+        ):
+            self._log("Select Home or a configured die before moving")
+            return
+
         try:
             stage_inst = self._get_stage_inst()
             move_to_position(
                 stage_inst,
-                self.home_position,
+                {"Z": self.home_position["Z"]},
                 read_position=False,
             )
+            pulse = _relative_pulse(
+                stage_inst,
+                self.home_position,
+                self.die_positions[destination],
+            )
+            if not move_with_control(stage_inst, pulse):
+                self._log(f"Move to die {destination} was stopped")
+                return
         except Exception as exc:
-            self._log(f"Move home error: {exc}")
+            self._log(f"Move to die {destination} error: {exc}")
             return
 
-        self._log(f"Moving to home: {self.home_position}")
+        self._log(f"Moved to die {destination} at Home Z")
 
     def _request_stop(self) -> None:
         """Request the automated Yelo sequence to stop at the next safe point."""
@@ -856,6 +904,15 @@ class StageGui(tk.Tk):
         options = die_travel_order(DIE_CONFIG_DATA_ROWS * 2, self.die_config)
         self.start_die_combobox.configure(values=options, state="readonly")
         self.start_die_combobox.current(0)
+        move_destinations = ["Home", *options] if self._home_is_set else options
+        self.move_destination_combobox.configure(
+            values=move_destinations,
+            state="readonly" if self._home_is_set else "disabled",
+        )
+        self.move_destination_combobox.set("Home" if self._home_is_set else "")
+        self.move_position_button.configure(
+            state=tk.NORMAL if self._home_is_set else tk.DISABLED,
+        )
         self._log(f"Loaded die config CSV with {len(self.die_config)} die entries")
 
     def _read_die_config_csv(self, csv_path: str) -> dict[str, tuple[str, str]]:
@@ -917,6 +974,14 @@ class StageGui(tk.Tk):
         self._home_is_set = True
         self.contact_z = None
         self._focus_reference_score = None
+        options = (
+            die_travel_order(DIE_CONFIG_DATA_ROWS * 2, self.die_config)
+            if self.die_config
+            else []
+        )
+        self.move_destination_combobox.configure(values=["Home", *options], state="readonly")
+        self.move_destination_combobox.set("Home")
+        self.move_position_button.configure(state=tk.NORMAL)
         self._log(f"Home set: {self.home_position}")
 
     def _set_contact(self) -> None:

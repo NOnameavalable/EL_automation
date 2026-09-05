@@ -23,16 +23,20 @@ class YeloConfiguredDieTests(unittest.TestCase):
             moves.append(pulse)
             return True
 
+        def get_pos(_stage, axes=None):
+            axes = ["X", "Y", "Z", "U", "V"] if axes is None else axes
+            return {axis: "0" for axis in axes}
+
         with (
             patch.object(yelo, "div"),
-            patch.object(yelo, "get_pos", return_value={"X": "0", "Y": "0", "Z": "0"}),
+            patch.object(yelo, "get_pos", side_effect=get_pos),
             patch.object(yelo, "convert_axis_pulse", side_effect=lambda _axis, pulse: str(pulse)),
             patch.object(yelo, "move_with_control", side_effect=move_with_control),
             patch.object(yelo, "move_to_position"),
         ):
             yelo.main(
                 stage=object(),
-                home_position={"X": "0", "Y": "0", "Z": "0"},
+                home_position={"X": "0", "Y": "0", "Z": "0", "U": "0", "V": "0"},
                 die_positions=_die_positions(),
                 contact_z="10",
                 capture_el=lambda die: captures.append(die) or True,
@@ -77,6 +81,34 @@ class YeloConfiguredDieTests(unittest.TestCase):
 
         self.assertEqual(captures, ["1", "3", "4", "2"])
         self.assertEqual(focus_checks, ["1", "3", "4", "2"])
+
+    def test_relative_pulse_targets_die_from_home(self):
+        with patch.object(
+            yelo,
+            "get_pos",
+            return_value={"X": "0", "Y": "0", "U": "0", "V": "0"},
+        ):
+            pulse = yelo._relative_pulse(
+                object(),
+                {"X": "0", "Y": "0", "U": "0", "V": "0"},
+                {"X": "10", "Y": "20", "U": "3", "V": "4"},
+            )
+
+        self.assertEqual(pulse, {"X": "200", "Y": "2", "U": "3", "V": "10"})
+
+    def test_relative_pulse_uses_current_controller_position(self):
+        with patch.object(
+            yelo,
+            "get_pos",
+            return_value={"X": "-100", "Y": "-1", "U": "-2", "V": "-5"},
+        ):
+            pulse = yelo._relative_pulse(
+                object(),
+                {"X": "0", "Y": "0", "U": "0", "V": "0"},
+                {"X": "10", "Y": "20", "U": "3", "V": "4"},
+            )
+
+        self.assertEqual(pulse, {"X": "100", "Y": "1", "U": "1", "V": "5"})
 
 
 if __name__ == "__main__":

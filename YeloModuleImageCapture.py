@@ -85,6 +85,8 @@ class DieLayout:
         Returns:
             Dictionary mapping die number strings to axis micrometer positions.
         """
+        # !!!! These are logical micrometer offsets from die 1, not controller
+        # positions, controller pulse counts, or axis calibration values.
         positions = {}
         total_dies = self.dies_per_row * 2
 
@@ -159,22 +161,38 @@ def _um_to_pulse(distance_um: int, um_per_pulse: float) -> str:
     return str(round(distance_um / um_per_pulse))
 
 
-def _relative_pulse(current: Point, target: Point) -> dict[str, str]:
-    """Return the relative pulse move from one micrometer position to another.
+def _relative_pulse(
+    stage: MessageBasedResource,
+    home_position: Point,
+    target_position: Point,
+) -> dict[str, str]:
+    """Return the logical pulse move from the current controller position.
+
+    Die positions are logical micrometer offsets from Home/die 1. The current
+    controller position is converted to that same logical pulse reference
+    before calculating the movement needed to reach ``target_position``.
 
     Args:
-        current: Current axis positions in micrometers.
-        target: Target axis positions in micrometers.
+        stage: Open SSD220 stage controller.
+        home_position: Recorded Home controller position.
+        target_position: Target logical micrometer position relative to die 1.
 
     Returns:
-        Relative movement by axis in pulses.
+        Relative movement by axis in logical pulses.
     """
+    axes = list(target_position)
+    current_controller = get_pos(stage, axes)
     return {
-        axis: _um_to_pulse(
-            int(target[axis]) - int(current[axis]),
-            AXIS_UM_PER_PULSE[axis],
+        axis: str(
+            int(_um_to_pulse(int(target_position[axis]), AXIS_UM_PER_PULSE[axis]))
+            - int(
+                convert_axis_pulse(
+                    axis,
+                    int(current_controller[axis]) - int(home_position[axis]),
+                )
+            )
         )
-        for axis in target
+        for axis in axes
     }
 
 
@@ -220,7 +238,6 @@ def main(
     Returns:
         None.
     """
-    current_position = die_positions["1"]
     travel_order = die_travel_order(
         len(die_positions),
         die_config,
@@ -240,7 +257,7 @@ def main(
 
     for die in travel_order:
         target_position = die_positions[die]
-        xy_pulse = _relative_pulse(current_position, target_position)
+        xy_pulse = _relative_pulse(stage, home_position, target_position)
         current_z = get_pos(stage, ["Z"])["Z"]
         z_down = convert_axis_pulse(
             "Z",
@@ -368,8 +385,6 @@ def main(
             print("Stop requested during Z-up movement. Stopping sequence.")
             return
 
-        current_position = target_position
-
     print("Returning to home.")
     move_to_position(
         stage,
@@ -386,7 +401,7 @@ if __name__ == "__main__":
     stage1 = set_res_gpib("3")
     move_to_position(stage1, {"X": "0", "Y": "0", "Z": "0"})
     try:
-        home_position = get_pos(stage1, ["X", "Y", "Z"])
+        home_position = get_pos(stage1, ["X", "Y", "Z", "U", "V"])
         main(
             stage=stage1,
             home_position=home_position,

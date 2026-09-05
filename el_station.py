@@ -1,5 +1,5 @@
 import tkinter as tk
-from lucam import Lucam, LucamNumCameras, LucamError, API
+# from lucam import Lucam, LucamNumCameras, LucamError, API
 from tkinter import messagebox, filedialog
 import os
 from collections.abc import Callable
@@ -32,11 +32,11 @@ MAX_FOCUS_ATTEMPTS = 10
 MAX_FOCUS_REFINEMENTS = 6
 FOCUS_SCORE_THRESHOLD_RATIO = 0.05
 
-WNDENUMPROC = ctypes.WINFUNCTYPE(
-    wintypes.BOOL,
-    wintypes.HWND,
-    wintypes.LPARAM,
-)
+# WNDENUMPROC = ctypes.WINFUNCTYPE(
+#     wintypes.BOOL,
+#     wintypes.HWND,
+#     wintypes.LPARAM,
+# )
 
 
 class LucamStreamApp:
@@ -304,6 +304,8 @@ class LucamStreamApp:
                 controller_delta = int(target_position - current_position)
                 if controller_delta == 0:
                     return True
+                # !!!! Be careful: _move_motor() expects a logical pulse, not
+                # the raw controller-coordinate difference calculated above.
                 logical_pulse = convert_axis_pulse(EL_CAMERA_AXIS, controller_delta)
                 if not self._move_motor(logical_pulse):
                     self.update_status("Adaptive focus cancelled", "red")
@@ -1432,4 +1434,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
