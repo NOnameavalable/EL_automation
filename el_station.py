@@ -1,5 +1,5 @@
 import tkinter as tk
-# from lucam import Lucam, LucamNumCameras, LucamError, API
+from lucam import Lucam, LucamNumCameras, LucamError, API
 from tkinter import messagebox, filedialog
 import os
 from collections.abc import Callable
@@ -32,11 +32,11 @@ MAX_FOCUS_ATTEMPTS = 10
 MAX_FOCUS_REFINEMENTS = 6
 FOCUS_SCORE_THRESHOLD_RATIO = 0.05
 
-# WNDENUMPROC = ctypes.WINFUNCTYPE(
-#     wintypes.BOOL,
-#     wintypes.HWND,
-#     wintypes.LPARAM,
-# )
+WNDENUMPROC = ctypes.WINFUNCTYPE(
+    wintypes.BOOL,
+    wintypes.HWND,
+    wintypes.LPARAM,
+)
 
 
 class LucamStreamApp:
