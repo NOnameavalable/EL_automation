@@ -27,13 +27,12 @@ from SSD220 import (
     convert_axis_pulse,
     get_pos,
     move,
-    move_with_control,
     move_to_position,
     set_all_axes_speed_table,
     set_res_gpib,
 )
 from el_station import FOCUS_SCORE_THRESHOLD_RATIO, LucamStreamApp
-from YeloModuleImageCapture import DieLayout, _relative_pulse, die_travel_order
+from YeloModuleImageCapture import AXIS_UM_PER_PULSE, DieLayout, die_travel_order
 from YeloModuleImageCapture import main as run_yelo_main
 
 PAD_BACKGROUND = "#dedede"
@@ -236,6 +235,7 @@ class StageGui(tk.Tk):
         self._focus_reference_score: Optional[float] = None
         self.home_position: dict[str, str] = {axis: "0" for axis in AXES}
         self.die_positions: Optional[dict[str, dict[str, str]]] = None
+        self.die_controller_positions: Optional[dict[str, dict[str, str]]] = None
         self._home_is_set = False
         self.contact_z: Optional[str] = None
         self.die_config_csv_path = tk.StringVar()
@@ -532,59 +532,37 @@ class StageGui(tk.Tk):
 
         destination = self.move_destination_combobox.get()
         if destination == "Home":
-            try:
-                move_to_position(
-                    self._get_stage_inst(),
-                    self.home_position,
-                    read_position=False,
-                )
-            except Exception as exc:
-                self._log(f"Move home error: {exc}")
-                return
-            self._log(f"Moving to home: {self.home_position}")
-            return
-
-        if destination == "Contact":
+            target_position = self.home_position
+            success_message = f"Moved to Home: {self.home_position}"
+        elif destination == "Contact":
             if self.contact_z is None:
                 self._log("Set Contact before moving to Contact")
                 return
-
-            try:
-                move_to_position(
-                    self._get_stage_inst(),
-                    {"Z": self.contact_z},
-                    read_position=False,
-                )
-            except Exception as exc:
-                self._log(f"Move to contact error: {exc}")
-                return
-            self._log(f"Moved to Contact Z: {self.contact_z}")
-            return
-
-        if (
-            not destination
-            or destination not in self.die_config
-            or self.die_positions is None
-            or destination not in self.die_positions
+            target_position = {"Z": self.contact_z}
+            success_message = f"Moved to Contact Z: {self.contact_z}"
+        elif (
+            destination in self.die_config
+            and self.die_controller_positions is not None
+            and destination in self.die_controller_positions
         ):
+            target_position = self.die_controller_positions[destination]
+            success_message = f"Moved to die {destination}"
+        else:
             self._log("Select Home or a configured die before moving")
             return
 
         try:
-            stage_inst = self._get_stage_inst()
-            pulse = _relative_pulse(
-                stage_inst,
-                self.home_position,
-                self.die_positions[destination],
+            move_to_position(
+                self._get_stage_inst(),
+                target_position,
+                read_position=False,
+                home_z=self.home_position["Z"],
             )
-            if not move_with_control(stage_inst, pulse):
-                self._log(f"Move to die {destination} was stopped")
-                return
         except Exception as exc:
-            self._log(f"Move to die {destination} error: {exc}")
+            self._log(f"Move to {destination} error: {exc}")
             return
 
-        self._log(f"Moved to die {destination}")
+        self._log(success_message)
 
     def _request_stop(self) -> None:
         """Request the automated Yelo sequence to stop at the next safe point."""
@@ -983,9 +961,9 @@ class StageGui(tk.Tk):
         self.move_position_button.configure(state=tk.NORMAL)
 
     def _set_home(self) -> None:
-        """Store the current stage location as the workflow home position."""
+        """Record Home and build layout and absolute controller die positions."""
         try:
-            self.home_position = get_pos(self._get_stage_inst())
+            home_position = get_pos(self._get_stage_inst())
             die_layout = DieLayout(
                 dies_per_row=16,
                 dies_per_group=4,
@@ -996,11 +974,31 @@ class StageGui(tk.Tk):
                 second_row_u_row_offset=5000,
                 second_row_center_offset=250,
             )
-            self.die_positions = die_layout.die_positions()
+            die_positions = die_layout.die_positions()
+            # Layout offsets stay in micrometers for the automatic sequence.
+            # Manual destinations use absolute controller pulses at Home Z.
+            die_controller_positions = {
+                die: {
+                    **{
+                        axis: str(
+                            int(home_position[axis])
+                            + int(convert_axis_pulse(
+                                axis, round(int(offset) / AXIS_UM_PER_PULSE[axis])
+                            ))
+                        )
+                        for axis, offset in position.items()
+                    },
+                    "Z": home_position["Z"],
+                }
+                for die, position in die_positions.items()
+            }
         except Exception as exc:
             self._log(f"Set home error: {exc}")
             return
 
+        self.home_position = home_position
+        self.die_positions = die_positions
+        self.die_controller_positions = die_controller_positions
         self._home_is_set = True
         self.contact_z = None
         self._focus_reference_score = None

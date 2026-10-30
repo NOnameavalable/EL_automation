@@ -85,6 +85,7 @@ def _install_import_stubs() -> None:
     sys.modules["el_station"] = el_station
 
     yelo = types.ModuleType("YeloModuleImageCapture")
+    yelo.AXIS_UM_PER_PULSE = {"X": 0.05, "Y": 10, "U": 1.0, "V": 0.4}
     yelo.DieLayout = object
     yelo._relative_pulse = lambda *_args, **_kwargs: {}
     yelo.die_travel_order = lambda _count, config: list(config)
@@ -166,6 +167,7 @@ class MoveDestinationTests(unittest.TestCase):
         self.gui.die_config = {"1": ("one", ""), "2": ("two", "")}
         self.gui._home_is_set = False
         self.gui.contact_z = None
+        self.gui.home_position = {"X": "0", "Z": "50"}
         self.logs = []
         self.gui._log = self.logs.append
 
@@ -231,7 +233,10 @@ class MoveDestinationTests(unittest.TestCase):
         self.gui._get_stage_inst = lambda: "stage"
 
         with (
-            patch.object(stage_gui, "get_pos", return_value={"Z": "0"}),
+            patch.object(stage_gui, "get_pos", return_value={
+                "X": "0", "Y": "0", "Z": "0", "U": "0", "V": "0"
+            }),
+            patch.object(stage_gui, "convert_axis_pulse", side_effect=lambda _axis, pulse: str(-int(pulse))),
             patch.object(stage_gui, "DieLayout", DieLayout),
         ):
             self.gui._set_home()
@@ -260,9 +265,20 @@ class MoveDestinationTests(unittest.TestCase):
             self.gui._handle_move_position()
 
         move_to_position.assert_called_once_with(
-            "stage", {"Z": "123"}, read_position=False
+            "stage", {"Z": "123"}, read_position=False, home_z="50"
         )
         self.assertEqual(self.logs, ["Moved to Contact Z: 123"])
+
+    def test_home_destination_passes_recorded_home_z(self):
+        self.gui._home_is_set = True
+        self.gui._main_running = False
+        self.gui.move_destination_combobox.set("Home")
+        self.gui._get_stage_inst = lambda: "stage"
+        with patch.object(stage_gui, "move_to_position") as movement:
+            self.gui._handle_move_position()
+        movement.assert_called_once_with(
+            "stage", self.gui.home_position, read_position=False, home_z="50"
+        )
 
     def test_contact_without_recorded_height_does_not_move(self):
         self.gui._home_is_set = True

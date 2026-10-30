@@ -67,6 +67,13 @@ Implications:
 - `stage_gui.py` creates `DieLayout` during Set Home.
 - The resulting die-position dictionary is passed into
   `YeloModuleImageCapture.main()`.
+- Keep `die_positions` in micrometers for the automatic sequence. Build a second
+  `die_controller_positions` table inline in Set Home using the same calibration
+  and direction conversion, with Z fixed at Home Z for manual die moves.
+- Rebuild both tables whenever Home changes and publish Home and both tables
+  together only after generation succeeds.
+- The manual Move callback selects an absolute destination with if/elif/else and
+  delegates movement ordering to `move_to_position()`.
 
 ## Skip Unconfigured Dies In Yelo
 

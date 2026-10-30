@@ -292,6 +292,7 @@ def main(
                 move_to_position(
                     stage,
                     home_position,
+                    home_z=home_position["Z"],
                     read_position=False,
                     stop_requested=stop_requested,
                     resume_allowed=resume_allowed,
@@ -315,6 +316,7 @@ def main(
                     move_to_position(
                         stage,
                         home_position,
+                        home_z=home_position["Z"],
                         read_position=False,
                         stop_requested=stop_requested,
                         resume_allowed=resume_allowed,
@@ -329,6 +331,7 @@ def main(
                     move_to_position(
                         stage,
                         home_position,
+                        home_z=home_position["Z"],
                         read_position=False,
                         stop_requested=stop_requested,
                         resume_allowed=resume_allowed,
@@ -342,6 +345,7 @@ def main(
                     move_to_position(
                         stage,
                         home_position,
+                        home_z=home_position["Z"],
                         read_position=False,
                         stop_requested=stop_requested,
                         resume_allowed=resume_allowed,
@@ -370,6 +374,7 @@ def main(
                 move_to_position(
                     stage,
                     home_position,
+                    home_z=home_position["Z"],
                     read_position=False,
                     stop_requested=stop_requested,
                     resume_allowed=resume_allowed,
@@ -389,6 +394,7 @@ def main(
     move_to_position(
         stage,
         home_position,
+        home_z=home_position["Z"],
         read_position=False,
         stop_requested=stop_requested,
         resume_allowed=resume_allowed,

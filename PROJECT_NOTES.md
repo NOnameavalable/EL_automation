@@ -201,11 +201,14 @@ so the probe is not lowered until the lateral movement is complete.
 
 After `Set Home`, the stage GUI enables a destination combobox and Move button.
 The destination list contains `Home` and the dies present in the loaded CSV.
-Selecting `Home` moves to the recorded controller Home position. Selecting a
-die first returns Z to Home Z, then `_relative_pulse()` reads the current
-X/Y/U/V controller positions and calculates the direct logical pulse movement
-to that die's logical micrometer position. A manual die move remains retracted
-at Home Z; it does not establish probe contact.
+Selecting `Home` moves to the recorded controller Home position. Set Home also
+builds `die_controller_positions` from the micrometer layout offsets using axis
+calibration, controller direction conversion, and the recorded Home position.
+Each manual die target includes Home Z. Home, Contact, and die selections use
+one `move_to_position()` call; a move from Contact to a die finishes Z retraction
+before lateral motion and remains at Home Z without establishing contact.
+The original `die_positions` micrometer table remains in use by the automatic
+sequence. Both tables are rebuilt together whenever Home is recorded again.
 
 ### SSD220 Speed Table Convention
 

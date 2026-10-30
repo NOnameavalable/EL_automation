@@ -14,7 +14,7 @@ def _die_positions() -> dict[str, dict[str, str]]:
 
 
 class YeloConfiguredDieTests(unittest.TestCase):
-    def _run_sequence(self, *, die_config=None, start_die=None):
+    def _run_sequence(self, *, die_config=None, start_die=None, home_z="0"):
         moves = []
         captures = []
         focus_checks = []
@@ -32,11 +32,11 @@ class YeloConfiguredDieTests(unittest.TestCase):
             patch.object(yelo, "get_pos", side_effect=get_pos),
             patch.object(yelo, "convert_axis_pulse", side_effect=lambda _axis, pulse: str(pulse)),
             patch.object(yelo, "move_with_control", side_effect=move_with_control),
-            patch.object(yelo, "move_to_position"),
+            patch.object(yelo, "move_to_position") as home_move,
         ):
             yelo.main(
                 stage=object(),
-                home_position={"X": "0", "Y": "0", "Z": "0", "U": "0", "V": "0"},
+                home_position={"X": "0", "Y": "0", "Z": home_z, "U": "0", "V": "0"},
                 die_positions=_die_positions(),
                 contact_z="10",
                 capture_el=lambda die: captures.append(die) or True,
@@ -46,6 +46,8 @@ class YeloConfiguredDieTests(unittest.TestCase):
                 get_focus_score=lambda die: focus_checks.append(die) or 100.0,
                 refocus=lambda _die: True,
             )
+
+        self.assertEqual(home_move.call_args.kwargs["home_z"], home_z)
 
         return moves, captures, focus_checks
 
@@ -81,6 +83,9 @@ class YeloConfiguredDieTests(unittest.TestCase):
 
         self.assertEqual(captures, ["1", "3", "4", "2"])
         self.assertEqual(focus_checks, ["1", "3", "4", "2"])
+
+    def test_return_home_uses_recorded_nonzero_home_z(self):
+        self._run_sequence(die_config={"1": object()}, home_z="50")
 
     def test_relative_pulse_targets_die_from_home(self):
         with patch.object(
