@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch, sentinel
 
 import SSD220
+from YeloModuleImageCapture import _relative_pulse
 from stage_gui import StageGui
 
 
@@ -18,6 +19,8 @@ class ManualDieMoveTests(unittest.TestCase):
         }
         gui.move_destination_combobox = MagicMock()
         gui.move_destination_combobox.get.return_value = destination
+        gui.home_die_combobox = MagicMock()
+        gui.home_die_combobox.get.return_value = "1"
         gui._get_stage_inst = MagicMock(return_value=sentinel.stage)
         gui._log = MagicMock()
         return gui
@@ -99,6 +102,7 @@ class ManualDieMoveTests(unittest.TestCase):
             die_layout.return_value.die_positions.return_value = layout
             for home, expected in zip(homes, expected_targets):
                 gui._set_home()
+                die_layout.return_value.die_positions.assert_called_with("1")
                 self.assertEqual(gui.home_position, home)
                 self.assertEqual(gui.die_positions, layout)
                 self.assertEqual(gui.die_controller_positions, {"1": expected})
@@ -118,6 +122,54 @@ class ManualDieMoveTests(unittest.TestCase):
         self.assertEqual(gui.home_position, previous_home)
         self.assertEqual(gui.die_positions, previous_layout)
         self.assertEqual(gui.die_controller_positions, previous_targets)
+
+    def test_selected_reference_aligns_manual_and_automatic_targets(self):
+        home = {"X": "1000", "Y": "2000", "U": "3000", "V": "4000", "Z": "50"}
+        for reference_die, die_one_target in (
+            ("3", {"X": "1000", "Y": "2900", "U": "3000", "V": "4000", "Z": "50"}),
+            ("10", {"X": "751000", "Y": "6875", "U": "8250", "V": "16500", "Z": "50"}),
+        ):
+            with self.subTest(reference_die=reference_die):
+                gui = self._gui_for_destination()
+                gui._refresh_move_destinations = MagicMock()
+                gui.home_die_combobox.get.return_value = reference_die
+                with patch("stage_gui.get_pos", return_value=home):
+                    gui._set_home()
+
+                self.assertEqual(gui.die_controller_positions[reference_die], home)
+                self.assertEqual(gui.die_controller_positions["1"], die_one_target)
+                self.assertEqual(len(gui.die_positions), 32)
+                # At each manual destination, the automatic sequence should
+                # calculate zero remaining travel on every layout axis.
+                for die, target in gui.die_controller_positions.items():
+                    with patch("YeloModuleImageCapture.get_pos", return_value=target):
+                        pulse = _relative_pulse(sentinel.stage, home, gui.die_positions[die])
+                    self.assertEqual(pulse, {axis: "0" for axis in ("X", "Y", "U", "V")})
+
+                with patch("stage_gui.move_to_position") as movement:
+                    gui._handle_move_position()
+                movement.assert_called_once_with(
+                    sentinel.stage, die_one_target, read_position=False, home_z="50"
+                )
+
+    def test_invalid_reference_keeps_previous_home_and_coordinates(self):
+        gui = self._gui_for_destination()
+        previous = (gui.home_position, gui.die_positions, gui.die_controller_positions)
+        gui.home_die_combobox.get.return_value = "33"
+        gui._refresh_move_destinations = MagicMock()
+        with patch("stage_gui.get_pos", return_value=gui.home_position):
+            gui._set_home()
+        self.assertEqual((gui.home_position, gui.die_positions, gui.die_controller_positions), previous)
+        gui._refresh_move_destinations.assert_not_called()
+        gui._log.assert_called_once_with("Set home error: Invalid reference die: 33")
+
+    def test_running_sequence_blocks_home_changes(self):
+        gui = self._gui_for_destination()
+        gui._main_running = True
+        gui._set_home()
+        gui._get_stage_inst.assert_not_called()
+        gui.home_die_combobox.get.assert_not_called()
+        gui._log.assert_called_once_with("Cannot set Home while the main sequence is running")
 
 
 if __name__ == "__main__":

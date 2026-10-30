@@ -40,7 +40,7 @@ AXIS_UM_PER_PULSE = {
 class DieLayout:
     """Describe the physical die arrangement on the prober stage.
 
-    The layout uses die 1 as the reference position.
+    The layout uses the selected reference die, defaulting to die 1.
     X controls movement down between die rows, and Y controls movement along a row.
     X and V apply the second-row die-upside-down offset. U applies the original
     second-row row correction. Y and U apply the center offset on the second row.
@@ -74,16 +74,22 @@ class DieLayout:
     second_row_u_row_offset: int = 0
     second_row_center_offset: int = 0
 
-    def die_positions(self) -> dict[str, Point]:
-        """Return die positions for the full layout.
+    def die_positions(self, reference_die: str = "1") -> dict[str, Point]:
+        """Return the full layout relative to the selected reference die.
 
-        Die `1` is the reference position. X controls the down movement between
-        rows, Y controls movement along each row, X/V carry the die-upside-down
+        X controls the down movement between rows, Y controls movement along
+        each row, X/V carry the die-upside-down
         second-row offset, U carries the row correction, and Y/U carry the
         second-row center offset.
 
+        Args:
+            reference_die: Die ID at the recorded Home position, defaulting to `1`.
+
         Returns:
-            Dictionary mapping die number strings to axis micrometer positions.
+            All original die IDs mapped to axis micrometer offsets from Home.
+
+        Raises:
+            ValueError: If the reference die is not in the layout.
         """
         # !!!! These are logical micrometer offsets from die 1, not controller
         # positions, controller pulse counts, or axis calibration values.
@@ -111,7 +117,17 @@ class DieLayout:
                 "V": str(v),
             }
 
-        return positions
+        if reference_die not in positions:
+            raise ValueError(f"Invalid reference die: {reference_die}")
+
+        reference = positions[reference_die]
+        return {
+            die: {
+                axis: str(int(value) - int(reference[axis]))
+                for axis, value in position.items()
+            }
+            for die, position in positions.items()
+        }
 
 
 def die_travel_order(
@@ -168,14 +184,14 @@ def _relative_pulse(
 ) -> dict[str, str]:
     """Return the logical pulse move from the current controller position.
 
-    Die positions are logical micrometer offsets from Home/die 1. The current
-    controller position is converted to that same logical pulse reference
+    Die positions are logical micrometer offsets from the selected Home die.
+    The current controller position is converted to that same logical pulse reference
     before calculating the movement needed to reach ``target_position``.
 
     Args:
         stage: Open SSD220 stage controller.
         home_position: Recorded Home controller position.
-        target_position: Target logical micrometer position relative to die 1.
+        target_position: Target logical micrometer position relative to Home.
 
     Returns:
         Relative movement by axis in logical pulses.

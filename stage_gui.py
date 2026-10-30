@@ -266,6 +266,20 @@ class StageGui(tk.Tk):
         setup_frame.grid(row=1, column=0, padx=12)
 
         """================ Button Set ================"""
+        home_die_frame = tk.Frame(setup_frame, bg=WINDOW_BACKGROUND)
+        home_die_frame.pack(pady=(0, 4))
+        tk.Label(home_die_frame, text="Reference Die:", bg=WINDOW_BACKGROUND).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        self.home_die_combobox = ttk.Combobox(
+            home_die_frame,
+            values=[str(die) for die in range(1, DIE_CONFIG_DATA_ROWS * 2 + 1)],
+            state="readonly",
+            width=4,
+        )
+        self.home_die_combobox.set("1")
+        self.home_die_combobox.pack(side=tk.LEFT)
+
         set_home_button = tk.Button(
             setup_frame,
             text="Set Home",
@@ -962,7 +976,12 @@ class StageGui(tk.Tk):
 
     def _set_home(self) -> None:
         """Record Home and build layout and absolute controller die positions."""
+        if self._main_running:
+            self._log("Cannot set Home while the main sequence is running")
+            return
+
         try:
+            reference_die = self.home_die_combobox.get()
             home_position = get_pos(self._get_stage_inst())
             die_layout = DieLayout(
                 dies_per_row=16,
@@ -974,7 +993,7 @@ class StageGui(tk.Tk):
                 second_row_u_row_offset=5000,
                 second_row_center_offset=250,
             )
-            die_positions = die_layout.die_positions()
+            die_positions = die_layout.die_positions(reference_die)
             # Layout offsets stay in micrometers for the automatic sequence.
             # Manual destinations use absolute controller pulses at Home Z.
             die_controller_positions = {
@@ -1003,7 +1022,7 @@ class StageGui(tk.Tk):
         self.contact_z = None
         self._focus_reference_score = None
         self._refresh_move_destinations()
-        self._log(f"Home set: {self.home_position}")
+        self._log(f"Home set at die {reference_die}: {self.home_position}")
 
     def _set_contact(self) -> None:
         """Store the current Z location as the contact position."""

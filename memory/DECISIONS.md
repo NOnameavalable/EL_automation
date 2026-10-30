@@ -65,6 +65,11 @@ and remain stable through the run.
 
 Implications:
 - `stage_gui.py` creates `DieLayout` during Set Home.
+- Set Home passes the selected Reference Die ID to `die_positions()`, defaulting
+  to `"1"`. Offsets on all four layout axes are relative to that die; controller
+  counters are not reset. Home movement returns to the recorded reference die.
+- Reference Die preserves every original die ID. CSV configuration and Starting
+  Die continue to determine which dies are tested and in what order.
 - The resulting die-position dictionary is passed into
   `YeloModuleImageCapture.main()`.
 - Keep `die_positions` in micrometers for the automatic sequence. Build a second
