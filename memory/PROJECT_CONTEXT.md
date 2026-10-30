@@ -31,8 +31,10 @@ source meter output during the main probing sequence.
 
 ## Main Workflow
 
-1. Operator sets Home.
-2. `stage_gui.py` records `home_position` and builds `DieLayout` positions.
+1. Operator aligns a known die, selects its Reference Die ID (default `1`),
+   and clicks Set Home.
+2. `stage_gui.py` records `home_position` and builds `DieLayout` positions
+   relative to that reference die.
 3. Operator sets Contact Z.
 4. Operator loads a non-empty die configuration CSV.
 5. Operator may select a configured starting die; the first available die is
@@ -55,6 +57,11 @@ source meter output during the main probing sequence.
 
 - Die positions are stored as micrometer coordinates before conversion to motor
   pulses.
+- `DieLayout.die_positions(reference_die="1")` subtracts the reference die's
+  layout coordinates from every die. All 32 IDs remain available; Reference Die
+  does not filter dies, change their IDs, or select the test starting die.
+- Reference Die selection takes effect only when Set Home is clicked. Set Home
+  is blocked during a running sequence and still clears Contact Z and focus.
 - Set Home preserves these offsets in `die_positions` for the automatic sequence
   and generates `die_controller_positions` for manual Move destinations. The
   latter contains absolute X/Y/U/V controller pulses and the recorded Home Z.
@@ -83,7 +90,9 @@ source meter output during the main probing sequence.
 
 ## Key Vocabulary
 
-- Home: operator-recorded safe/reference stage location.
+- Home: operator-recorded safe/reference stage location at the selected die.
+- Reference Die: actual die ID aligned when Home is recorded, independent of
+  the Starting Die used to select where automated testing begins.
 - Contact Z: operator-recorded Z position for probe contact.
 - EL Station: camera/focus UI and Lucam control window.
 - Focus reference score: score captured before the sequence starts.

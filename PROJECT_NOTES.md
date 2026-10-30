@@ -74,13 +74,15 @@ Important note: each time the stepper/controller starts, it sets its current phy
 ### Suggested Workflow
 
 1. Pick a reliable physical origin on the stage.
-2. Use the GUI jog controls to align the probe/stage with the first die location.
-3. Click `Set Home` and treat that recorded X/Y location as the reference for later die movements.
+2. Use the GUI jog controls to align the probe/stage with a known die location.
+3. Select that die's actual ID in `Reference Die` (default `1`), then click
+   `Set Home` to record the reference for later die movements.
 4. Use the GUI jog controls to move Z to the die contact height.
 5. Click `Set Contact` so the probing sequence can return Z to that contact height when needed.
 6. While the program is running, use the recorded home/contact positions as the workflow references.
 
-In this workflow, the die map can be stored relative to the first die:
+The die map is stored relative to the selected reference die. For example,
+with the default reference die `1`:
 
 ```text
 die_1 = [0, 0]
@@ -137,7 +139,8 @@ calculating movement or comparing recorded positions.
 The workflow also uses two measurement units:
 
 - `DieLayout.die_positions()` contains logical layout coordinates in
-  micrometers relative to die 1. These values are neither pulse counts nor
+  micrometers relative to the selected reference die (default `1`). These values
+  are neither pulse counts nor
   controller positions. Axis calibration is applied later when the difference
   between two die positions is converted into logical relative pulses.
 - `move()` and `move_with_control()` accept logical relative pulse counts.

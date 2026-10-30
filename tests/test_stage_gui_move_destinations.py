@@ -163,6 +163,8 @@ class MoveDestinationTests(unittest.TestCase):
     def setUp(self):
         self.gui = object.__new__(stage_gui.StageGui)
         self.gui.move_destination_combobox = FakeCombobox()
+        self.gui.home_die_combobox = FakeCombobox("1")
+        self.gui._main_running = False
         self.gui.move_position_button = FakeButton()
         self.gui.die_config = {"1": ("one", ""), "2": ("two", "")}
         self.gui._home_is_set = False
@@ -224,7 +226,7 @@ class MoveDestinationTests(unittest.TestCase):
             def __init__(self, **_kwargs):
                 pass
 
-            def die_positions(self):
+            def die_positions(self, reference_die="1"):
                 return {"1": {"X": "0", "Y": "0", "U": "0", "V": "0"}}
 
         self.gui._home_is_set = True
