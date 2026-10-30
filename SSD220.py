@@ -33,6 +33,7 @@ AXIS_INDEX: dict[str, str] = {
 }
 
 SPEED_TABLE_INDEX = "0"
+DEFAULT_HOME_Z = "0"
 
 # Assign the controller direction used for a positive logical pulse on each
 # axis. A negative logical pulse automatically uses the opposite direction.
@@ -426,6 +427,7 @@ def move_to_position(
     stop_mode: str = "0",
     poll_delay: float = 0.1,
     poll_callback: Optional[Callable[[], None]] = None,
+    home_z: str = DEFAULT_HOME_Z,
 ) -> Point:
     """Move selected axes to recorded controller-coordinate positions.
 
@@ -436,7 +438,8 @@ def move_to_position(
         axes: Axes to move. If omitted, moves every axis in `target_position`.
         fast_speed: Optional fast speeds as an axis dictionary.
         low_speed: Optional low/start speeds as an axis dictionary.
-        wait: If `True`, wait for each moved axis to finish before returning.
+        wait: Whether to wait for the final movement phase. Intermediate
+            phases always finish before the next phase starts.
         reaction_time: Extra seconds to wait after each moved axis reports
             that motion is complete.
         read_position: If `True`, query and return current positions after
@@ -447,6 +450,7 @@ def move_to_position(
         stop_mode: SSD220 stop mode sent with ``AXI<axis>:STOP``.
         poll_delay: Seconds to wait between motion-status checks.
         poll_callback: Optional callback run during controlled movement polling.
+        home_z: Controller Home position for the Z axis (default "0").
 
     Returns:
         Current positions for all configured axes if `read_position` is `True`.
@@ -454,43 +458,62 @@ def move_to_position(
     """
     axes = list(target_position) if axes is None else list(axes)
     current = get_pos(inst, axes)
-    if "Z" in axes:
-        non_z_axes = [axis for axis in axes if axis != "Z"]
-        if int(target_position["Z"]) < int(current["Z"]):
-            axes = ["Z", *non_z_axes]
-        else:
-            axes = [*non_z_axes, "Z"]
-    pulse_to_target = {
-        axis: convert_axis_pulse(
-            axis,
-            int(target_position[axis]) - int(current[axis]),
-        )
-        for axis in axes
-    }
-    if stop_requested is not None or resume_allowed is not None or poll_callback is not None:
-        move_with_control(
-            inst,
-            pulse_to_target,
-            fast_speed=fast_speed,
-            low_speed=low_speed,
-            stop_requested=stop_requested,
-            resume_allowed=resume_allowed,
-            stop_mode=stop_mode,
-            poll_delay=poll_delay,
-            reaction_time=reaction_time,
-            poll_callback=poll_callback,
-        )
+    if all(int(target_position[axis]) == int(current[axis]) for axis in axes):
         return get_pos(inst) if read_position else {}
 
-    return move(
-        inst,
-        pulse_to_target,
-        fast_speed=fast_speed,
-        low_speed=low_speed,
-        wait=wait,
-        reaction_time=reaction_time,
-        read_position=read_position,
-    )
+    def move_axes(positions: Point, *, wait: bool) -> bool:
+        """Move one phase using fresh coordinates; return False on stop."""
+        if not positions:
+            return True
+        phase_current = get_pos(inst, list(positions))
+        pulse = {
+            axis: convert_axis_pulse(axis, int(position) - int(phase_current[axis]))
+            for axis, position in positions.items()
+        }
+        if all(int(value) == 0 for value in pulse.values()):
+            return True
+        if stop_requested is not None or resume_allowed is not None or poll_callback is not None:
+            return move_with_control(
+                inst,
+                pulse,
+                fast_speed=fast_speed,
+                low_speed=low_speed,
+                stop_requested=stop_requested,
+                resume_allowed=resume_allowed,
+                stop_mode=stop_mode,
+                poll_delay=poll_delay,
+                reaction_time=reaction_time,
+                poll_callback=poll_callback,
+            )
+        move(
+            inst,
+            pulse,
+            fast_speed=fast_speed,
+            low_speed=low_speed,
+            wait=wait,
+            reaction_time=reaction_time,
+            read_position=False,
+        )
+        return True
+
+    if "Z" in axes:
+        lateral_target = {axis: target_position[axis] for axis in axes if axis != "Z"}
+        z_target = {"Z": target_position["Z"]}
+        target_z = int(target_position["Z"])
+        current_z = int(current["Z"])
+        if target_z < current_z:
+            if move_axes(z_target, wait=True):
+                move_axes(lateral_target, wait=wait)
+        elif target_z == current_z and current_z != int(home_z):
+            if move_axes({"Z": str(home_z)}, wait=True):
+                if move_axes(lateral_target, wait=True):
+                    move_axes(z_target, wait=wait)
+        else:
+            if move_axes(lateral_target, wait=True):
+                move_axes(z_target, wait=wait)
+    else:
+        move_axes({axis: target_position[axis] for axis in axes}, wait=wait)
+    return get_pos(inst) if read_position else {}
 
 
 def div(inst: MessageBasedResource, axis: Axis = "X", div_n: str = "7") -> None:

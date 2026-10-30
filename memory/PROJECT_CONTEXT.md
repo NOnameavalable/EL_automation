@@ -55,6 +55,11 @@ source meter output during the main probing sequence.
 
 - Die positions are stored as micrometer coordinates before conversion to motor
   pulses.
+- Set Home preserves these offsets in `die_positions` for the automatic sequence
+  and generates `die_controller_positions` for manual Move destinations. The
+  latter contains absolute X/Y/U/V controller pulses and the recorded Home Z.
+- Manual Home, Contact, and die destinations share one `move_to_position()`
+  call; manual die moves finish at Home Z without establishing contact.
 - Axis calibration constants live in `YeloModuleImageCapture.py`.
 - Current calibration:
   - X: `0.05 um/pulse`
